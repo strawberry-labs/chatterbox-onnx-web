@@ -236,20 +236,65 @@ async function init() {
     }
 }
 
-// Create a default voice for testing
+// Create default voices
 async function createDefaultVoice() {
-    const defaultVoice = {
-        name: 'Ethan',
-        description: 'Male - Clear and assertive',
-        audioBlob: null, // Would need actual audio data
-        duration: 0,
-        isDefault: true
-    };
+    const defaultVoices = [
+        {
+            name: 'Stewie',
+            description: 'Male - Articulate and sophisticated',
+            audioPath: '/voices/stewie.wav',
+            isDefault: true
+        },
+        {
+            name: 'Lucy',
+            description: 'Female - Warm and engaging',
+            audioPath: '/voices/lucy.wav',
+            isDefault: true
+        }
+    ];
 
-    const id = await db.addVoice(defaultVoice);
-    defaultVoice.id = id;
-    state.voices.push(defaultVoice);
-    state.selectedVoice = defaultVoice;
+    for (const voiceData of defaultVoices) {
+        try {
+            // Fetch the audio file
+            const response = await fetch(voiceData.audioPath);
+            if (!response.ok) {
+                console.warn(`Failed to load ${voiceData.name} voice from ${voiceData.audioPath}`);
+                continue;
+            }
+
+            const audioBlob = await response.blob();
+
+            // Get duration
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            await new Promise(resolve => {
+                audio.addEventListener('loadedmetadata', resolve);
+            });
+            const duration = audio.duration;
+            URL.revokeObjectURL(audioUrl);
+
+            const voice = {
+                name: voiceData.name,
+                description: voiceData.description,
+                audioBlob: audioBlob,
+                duration: duration,
+                isDefault: voiceData.isDefault
+            };
+
+            const id = await db.addVoice(voice);
+            voice.id = id;
+            state.voices.push(voice);
+
+            console.log(`✓ Default voice "${voice.name}" loaded successfully`);
+        } catch (error) {
+            console.error(`Error loading default voice ${voiceData.name}:`, error);
+        }
+    }
+
+    // Select the first voice
+    if (state.voices.length > 0 && !state.selectedVoice) {
+        state.selectedVoice = state.voices[0];
+    }
 
     updateVoiceSelector();
     renderVoiceLibrary();

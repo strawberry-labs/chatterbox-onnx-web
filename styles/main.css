@@ -209,6 +209,7 @@ body {
 .footer-buttons {
     display: flex;
     gap: 8px;
+    margin-bottom: 12px;
 }
 
 .footer-btn {
@@ -226,6 +227,28 @@ body {
 .footer-btn:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
+}
+
+.made-by {
+    text-align: center;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.made-by p {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.made-by a {
+    color: var(--accent-primary);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.made-by a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
 }
 
 /* Main Content */

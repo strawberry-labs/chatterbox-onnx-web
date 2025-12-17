@@ -832,16 +832,15 @@ export class ChatterboxTTSEngine {
                 );
             }
 
-            // Remove start token (index 0) and last token (index -1) like Python: [:, 1:-1]
-            // Python always removes both first and last, regardless of STOP_SPEECH_TOKEN
+            // Step 7: Prepare speech tokens for decoding
             console.log('Speech token generation complete:');
             console.log('  Total generated tokens:', generateTokens.length);
             console.log('  First token (should be START):', generateTokens[0], '(expected:', START_SPEECH_TOKEN, ')');
             console.log('  Last token:', generateTokens[generateTokens.length - 1]);
             console.log('  Second-to-last token:', generateTokens[generateTokens.length - 2]);
 
-            // Step 7: Decode audio (following Python reference exactly)
             // Python: speech_tokens = generate_tokens[:, 1:-1]
+            // Always remove first (START) and last token, matching Python exactly
             const speechTokens = generateTokens.slice(1, -1);
 
             console.log('Speech token generation complete:');
@@ -858,7 +857,8 @@ export class ChatterboxTTSEngine {
                 ? Array.from(promptToken.data, x => Number(x))
                 : [];
 
-            const silenceTokens = new Array(3).fill(SILENCE_TOKEN);
+            // Use 10 silence tokens for better audio ending (prevents garbled audio)
+            const silenceTokens = new Array(10).fill(SILENCE_TOKEN);
 
             // Concatenate: [prompt_token, speech_tokens, silence_tokens]
             const finalSpeechTokens = [
