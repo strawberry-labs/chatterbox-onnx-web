@@ -565,10 +565,10 @@ export class ChatterboxTTSEngine {
                 }
             }
 
-            // Step 2: Process voice audio with speech encoder
-            progressCallback?.({ status: 'processing', message: 'Encoding voice sample...' });
+            // Step 2: Prepare audio tensor (will be used in first iteration)
+            progressCallback?.({ status: 'processing', message: 'Preparing audio...' });
 
-            // Check audio data statistics (avoid spread operator on large arrays)
+            // Check audio data statistics
             let audioMin = audioData[0];
             let audioMax = audioData[0];
             let audioSum = 0;
@@ -581,137 +581,28 @@ export class ChatterboxTTSEngine {
                 audioSumSquared += sample * sample;
             }
             const audioMean = audioSum / audioData.length;
-            const audioVariance = (audioSumSquared / audioData.length) - (audioMean * audioMean);
             const audioRMS = Math.sqrt(audioSumSquared / audioData.length);
 
-            console.log('🎤 [TTS] Input voice audio fingerprint:');
+            console.log('Input audio prepared:');
             console.log('  Length:', audioData.length, 'samples');
             console.log('  Duration:', (audioData.length / SAMPLE_RATE).toFixed(2), 'seconds');
-            console.log('  Min:', audioMin.toFixed(4), 'Max:', audioMax.toFixed(4));
-            console.log('  Mean:', audioMean.toFixed(6));
-            console.log('  RMS:', audioRMS.toFixed(6));
-            console.log('  Variance:', audioVariance.toFixed(6));
-            console.log('  First 10 samples:', Array.from(audioData.slice(0, 10).map(v => v.toFixed(4))));
+            console.log('  Range: [', audioMin.toFixed(4), ',', audioMax.toFixed(4), ']');
+            console.log('  Mean:', audioMean.toFixed(6), 'RMS:', audioRMS.toFixed(6));
 
             const audioTensor = new ort.Tensor('float32', audioData, [1, audioData.length]);
 
-            const speechEncoderOutputs = await this.speechEncoderSession.run({
-                audio_values: audioTensor
-            });
-
-            // Use correct output names from the model
-            const condEmb = speechEncoderOutputs.audio_features;  // not cond_emb
-            const promptToken = speechEncoderOutputs.audio_tokens;  // not prompt_token
-            const speakerEmbeddings = speechEncoderOutputs.speaker_embeddings;
-            const speakerFeatures = speechEncoderOutputs.speaker_features;
-
-            console.log('Speech encoder outputs received:');
-            console.log('  Conditional embedding shape:', condEmb?.dims);
-            console.log('  Prompt token shape:', promptToken?.dims);
-            console.log('  Speaker embeddings shape:', speakerEmbeddings?.dims);
-            console.log('  Speaker features shape:', speakerFeatures?.dims);
-
-            // Check if speaker embeddings have reasonable values
-            if (speakerEmbeddings) {
-                const embData = Array.from(speakerEmbeddings.data.slice(0, 10));
-                console.log('  First 10 speaker embedding values:', embData);
-
-                let embSum = 0;
-                let nonZeroCount = 0;
-                let absSum = 0;
-                for (let i = 0; i < speakerEmbeddings.data.length; i++) {
-                    const val = speakerEmbeddings.data[i];
-                    embSum += val;
-                    absSum += Math.abs(val);
-                    if (Math.abs(val) > 1e-6) nonZeroCount++;
-                }
-                const embMean = embSum / speakerEmbeddings.data.length;
-                const embAbsMean = absSum / speakerEmbeddings.data.length;
-
-                console.log('  Speaker embeddings statistics:');
-                console.log('    Mean:', embMean.toExponential(4));
-                console.log('    Absolute mean:', embAbsMean.toExponential(4));
-                console.log('    Non-zero values (>1e-6):', nonZeroCount, '/', speakerEmbeddings.data.length);
-
-                if (embAbsMean < 1e-5) {
-                    console.warn('  ⚠️ WARNING: Speaker embeddings are nearly zero!');
-                    console.warn('     This will prevent voice cloning from working correctly.');
-                    console.warn('     The model may not be extracting speaker characteristics properly.');
-                }
-            }
-
-            // Check speaker features as well
-            if (speakerFeatures) {
-                let featSum = 0;
-                let featAbsSum = 0;
-                for (let i = 0; i < speakerFeatures.data.length; i++) {
-                    const val = speakerFeatures.data[i];
-                    featSum += val;
-                    featAbsSum += Math.abs(val);
-                }
-                const featMean = featSum / speakerFeatures.data.length;
-                const featAbsMean = featAbsSum / speakerFeatures.data.length;
-
-                console.log('  Speaker features statistics:');
-                console.log('    Mean:', featMean.toExponential(4));
-                console.log('    Absolute mean:', featAbsMean.toExponential(4));
-                console.log('    First 10 values:', Array.from(speakerFeatures.data.slice(0, 10)));
-            }
-
-            // Step 3: Get text embeddings
-            progressCallback?.({ status: 'processing', message: 'Embedding text...' });
-
-            console.log('About to embed text tokens:');
-            console.log('  Token IDs to embed:', inputIds);
-            console.log('  Max token ID:', Math.max(...inputIds));
-            console.log('  Min token ID:', Math.min(...inputIds));
-
-            const inputIdsTensor = new ort.Tensor(
+            // Step 3: Prepare text input tensor (will be updated in loop)
+            let inputIdsTensor = new ort.Tensor(
                 'int64',
                 BigInt64Array.from(inputIds.map(id => BigInt(id))),
                 [1, inputIds.length]
             );
 
-            const embedOutputs = await this.embedTokensSession.run({
-                input_ids: inputIdsTensor
-            });
+            console.log('Text tokens prepared:');
+            console.log('  Token count:', inputIds.length);
+            console.log('  Token IDs:', inputIds);
 
-            const textEmbeds = embedOutputs.inputs_embeds;
-            console.log('Text embeddings shape:', textEmbeds.dims);
-
-            // Check if embeddings look reasonable
-            const embedData = textEmbeds.data;
-            let embedSum = 0;
-            for (let i = 0; i < Math.min(1024, embedData.length); i++) {
-                embedSum += Math.abs(embedData[i]);
-            }
-            console.log('First text embedding absolute sum:', embedSum.toFixed(2), '(should be >0)');
-
-            // Step 4: Concatenate conditional embedding with text embeddings
-            console.log('\nChecking concatenation:');
-            console.log('  condEmb shape:', condEmb.dims);
-            console.log('  textEmbeds shape:', textEmbeds.dims);
-
-            // Check condEmb statistics
-            let condSum = 0;
-            for (let i = 0; i < Math.min(1024, condEmb.data.length); i++) {
-                condSum += Math.abs(condEmb.data[i]);
-            }
-            console.log('  First condEmb absolute sum:', condSum.toFixed(2));
-
-            const inputsEmbeds = this.concatenateTensors(condEmb, textEmbeds);
-            const totalSeqLen = inputsEmbeds.dims[1];
-
-            console.log('  Concatenated embeddings shape:', inputsEmbeds.dims);
-
-            // Verify concatenation worked
-            let concatSum = 0;
-            for (let i = 0; i < Math.min(1024, inputsEmbeds.data.length); i++) {
-                concatSum += Math.abs(inputsEmbeds.data[i]);
-            }
-            console.log('  First concatenated embedding absolute sum:', concatSum.toFixed(2));
-
-            // Step 5: Initialize generation
+            // Step 4: Initialize generation (matching Python exactly)
             const generationStartTime = Date.now();
             progressCallback?.({
                 status: 'generating',
@@ -722,26 +613,73 @@ export class ChatterboxTTSEngine {
             const repetitionProcessor = new RepetitionPenaltyLogitsProcessor(repetitionPenalty);
             const generateTokens = [START_SPEECH_TOKEN];
 
-            // Initialize KV cache
-            const pastKeyValues = this.initializeKVCache(1);
+            // Variables that will be initialized in first iteration
+            let pastKeyValues = null;
+            let attentionMask = null;
+            let positionIds = null;
+            let currentInputsEmbeds = null;
+            let promptToken = null;
+            let speakerEmbeddings = null;
+            let speakerFeatures = null;
 
-            // Create attention mask and position IDs
-            let attentionMask = new ort.Tensor(
-                'int64',
-                new BigInt64Array(totalSeqLen).fill(1n),
-                [1, totalSeqLen]
-            );
-
-            let positionIds = new ort.Tensor(
-                'int64',
-                BigInt64Array.from(Array.from({ length: totalSeqLen }, (_, i) => BigInt(i))),
-                [1, totalSeqLen]
-            );
-
-            // Step 6: Generation loop
-            let currentInputsEmbeds = inputsEmbeds;
-
+            // Step 5: Generation loop (matching Python structure)
             for (let step = 0; step < maxNewTokens; step++) {
+                // Python: inputs_embeds = embed_tokens_session.run(None, {"input_ids": input_ids})[0]
+                const embedOutputs = await this.embedTokensSession.run({
+                    input_ids: inputIdsTensor
+                });
+                let inputsEmbeds = embedOutputs.inputs_embeds;
+
+                // Python: if i == 0:
+                if (step === 0) {
+                    // Python: cond_emb, prompt_token, speaker_embeddings, speaker_features = speech_encoder_session.run(None, ort_speech_encoder_input)
+                    progressCallback?.({ status: 'generating', message: 'Encoding voice...', elapsed: 0 });
+
+                    const speechEncoderOutputs = await this.speechEncoderSession.run({
+                        audio_values: audioTensor
+                    });
+
+                    const condEmb = speechEncoderOutputs.audio_features;
+                    promptToken = speechEncoderOutputs.audio_tokens;
+                    speakerEmbeddings = speechEncoderOutputs.speaker_embeddings;
+                    speakerFeatures = speechEncoderOutputs.speaker_features;
+
+                    console.log('Speech encoder outputs (first iteration):');
+                    console.log('  Conditional embedding shape:', condEmb.dims);
+                    console.log('  Prompt token shape:', promptToken.dims);
+                    console.log('  Speaker embeddings shape:', speakerEmbeddings.dims);
+                    console.log('  Speaker features shape:', speakerFeatures.dims);
+
+                    // Python: inputs_embeds = np.concatenate((cond_emb, inputs_embeds), axis=1)
+                    inputsEmbeds = this.concatenateTensors(condEmb, inputsEmbeds);
+
+                    // Python: batch_size, seq_len, _ = inputs_embeds.shape
+                    const batchSize = inputsEmbeds.dims[0];
+                    const seqLen = inputsEmbeds.dims[1];
+
+                    console.log('Initial inputs_embeds shape:', inputsEmbeds.dims);
+
+                    // Python: Initialize cache and LLM inputs
+                    pastKeyValues = this.initializeKVCache(batchSize);
+
+                    // Python: attention_mask = np.ones((batch_size, seq_len), dtype=np.int64)
+                    attentionMask = new ort.Tensor(
+                        'int64',
+                        new BigInt64Array(batchSize * seqLen).fill(1n),
+                        [batchSize, seqLen]
+                    );
+
+                    // Python: position_ids = np.arange(seq_len, dtype=np.int64).reshape(1, -1).repeat(batch_size, axis=0)
+                    const posIds = new BigInt64Array(batchSize * seqLen);
+                    for (let b = 0; b < batchSize; b++) {
+                        for (let s = 0; s < seqLen; s++) {
+                            posIds[b * seqLen + s] = BigInt(s);
+                        }
+                    }
+                    positionIds = new ort.Tensor('int64', posIds, [batchSize, seqLen]);
+                }
+
+                currentInputsEmbeds = inputsEmbeds;
                 // Prepare inputs for language model
                 const lmInputs = {
                     inputs_embeds: currentInputsEmbeds,
@@ -866,42 +804,30 @@ export class ChatterboxTTSEngine {
                     }
                 }
 
-                // For next iteration, we only need the embedding of the newly generated token
-                // Get embedding for the next token
-                const nextTokenTensor = new ort.Tensor(
-                    'int64',
-                    BigInt64Array.from([BigInt(nextTokenId)]),
-                    [1, 1]
-                );
-
-                const nextEmbedOutputs = await this.embedTokensSession.run({
-                    input_ids: nextTokenTensor
-                });
-
-                // CRITICAL: Clone embeddings too - same buffer reuse issue
-                const embedSrc = nextEmbedOutputs.inputs_embeds.data;
-                const embedData = new Float32Array(embedSrc.length);
-                for (let j = 0; j < embedSrc.length; j++) {
-                    embedData[j] = embedSrc[j];
-                }
-                currentInputsEmbeds = new ort.Tensor(
-                    'float32',
-                    embedData,
-                    [...nextEmbedOutputs.inputs_embeds.dims]
-                );
-
-                // Update attention mask and position IDs
-                // CRITICAL: Concatenate with existing mask, don't create new one
+                // Python: Update values for next generation loop
+                // Python: attention_mask = np.concatenate([attention_mask, np.ones((batch_size, 1), dtype=np.int64)], axis=1)
                 const oldMaskData = attentionMask.data;
-                const newMaskData = new BigInt64Array(oldMaskData.length + 1);
+                const batchSize = attentionMask.dims[0];
+                const newMaskData = new BigInt64Array(oldMaskData.length + batchSize);
                 newMaskData.set(oldMaskData, 0);
-                newMaskData[oldMaskData.length] = 1n;
-                attentionMask = new ort.Tensor('int64', newMaskData, [1, newMaskData.length]);
+                for (let b = 0; b < batchSize; b++) {
+                    newMaskData[oldMaskData.length + b] = 1n;
+                }
+                attentionMask = new ort.Tensor('int64', newMaskData, [batchSize, (oldMaskData.length / batchSize) + 1]);
 
+                // Python: position_ids = position_ids[:, -1:] + 1
                 const lastPos = Number(positionIds.data[positionIds.data.length - 1]);
                 positionIds = new ort.Tensor(
                     'int64',
                     BigInt64Array.from([BigInt(lastPos + 1)]),
+                    [batchSize, 1]
+                );
+
+                // Python: input_ids = np.argmax(next_token_logits, axis=-1, keepdims=True).astype(np.int64)
+                // Update inputIdsTensor for next iteration's embedding call
+                inputIdsTensor = new ort.Tensor(
+                    'int64',
+                    BigInt64Array.from([BigInt(nextTokenId)]),
                     [1, 1]
                 );
             }
@@ -914,95 +840,67 @@ export class ChatterboxTTSEngine {
             console.log('  Last token:', generateTokens[generateTokens.length - 1]);
             console.log('  Second-to-last token:', generateTokens[generateTokens.length - 2]);
 
+            // Step 7: Decode audio (following Python reference exactly)
+            // Python: speech_tokens = generate_tokens[:, 1:-1]
             const speechTokens = generateTokens.slice(1, -1);
 
-            console.log('After slicing [1:-1]:');
-            console.log('  Speech tokens count:', speechTokens.length);
+            console.log('Speech token generation complete:');
+            console.log('  Generated tokens (including START/STOP):', generateTokens.length);
+            console.log('  Speech tokens after slicing [1:-1]:', speechTokens.length);
             console.log('  First speech token:', speechTokens[0]);
-            console.log('  Last 10 speech tokens:', speechTokens.slice(-10));
             console.log('  Last speech token:', speechTokens[speechTokens.length - 1]);
 
-            // HACK: Add padding silence tokens at start and end to prevent corruption
-            // We'll trim the corresponding audio samples later
-            const PADDING_SILENCE_TOKENS = 5; // ~0.5 seconds of silence padding at each end
-            const paddingStart = new Array(PADDING_SILENCE_TOKENS).fill(SILENCE_TOKEN);
-            const paddingEnd = new Array(PADDING_SILENCE_TOKENS).fill(SILENCE_TOKEN);
-            const paddedSpeechTokens = [...paddingStart, ...speechTokens, ...paddingEnd];
-
-            console.log('Applied padding hack:');
-            console.log('  Original speech tokens:', speechTokens.length);
-            console.log('  Padded speech tokens:', paddedSpeechTokens.length);
-            console.log('  Padding:', PADDING_SILENCE_TOKENS, 'silence tokens at start and', PADDING_SILENCE_TOKENS, 'at end');
-
-            // Step 7: Decode to audio
             progressCallback?.({ status: 'decoding', message: 'Decoding to audio waveform...' });
 
-            // Concatenate prompt token, generated tokens, and silence
+            // Python: silence_tokens = np.full((speech_tokens.shape[0], 3), SILENCE_TOKEN, dtype=np.int64)
+            // Python: speech_tokens = np.concatenate([prompt_token, speech_tokens, silence_tokens], axis=1)
             const promptTokenData = promptToken?.data
                 ? Array.from(promptToken.data, x => Number(x))
                 : [];
 
-            console.log('Token sequence composition:');
-            console.log('  Prompt tokens:', promptTokenData.length);
-            console.log('  Padded speech tokens:', paddedSpeechTokens.length);
-            if (promptTokenData.length > 0) {
-                console.log('  First 5 prompt tokens:', promptTokenData.slice(0, 5));
-            }
-            if (paddedSpeechTokens.length > 0) {
-                console.log('  First 5 padded tokens:', paddedSpeechTokens.slice(0, 5));
-            }
-
             const silenceTokens = new Array(3).fill(SILENCE_TOKEN);
-            const finalTokens = [...promptTokenData, ...paddedSpeechTokens, ...silenceTokens];
 
+            // Concatenate: [prompt_token, speech_tokens, silence_tokens]
+            const finalSpeechTokens = [
+                ...promptTokenData,
+                ...speechTokens,
+                ...silenceTokens
+            ];
+
+            console.log('Final token sequence for decoder:');
+            console.log('  Prompt tokens:', promptTokenData.length);
+            console.log('  Speech tokens:', speechTokens.length);
             console.log('  Silence tokens:', silenceTokens.length);
-            console.log('  Total sequence length:', finalTokens.length);
+            console.log('  Total tokens:', finalSpeechTokens.length);
 
             const speechTokensTensor = new ort.Tensor(
                 'int64',
-                BigInt64Array.from(finalTokens.map(t => BigInt(t))),
-                [1, finalTokens.length]
+                BigInt64Array.from(finalSpeechTokens.map(t => BigInt(t))),
+                [1, finalSpeechTokens.length]
             );
 
+            // Python: wav = cond_decoder_session.run(None, dict(
+            //     speech_tokens=speech_tokens,
+            //     speaker_embeddings=speaker_embeddings,
+            //     speaker_features=speaker_features,
+            // ))[0].squeeze(axis=0)
             const decoderOutputs = await this.conditionalDecoderSession.run({
                 speech_tokens: speechTokensTensor,
                 speaker_embeddings: speakerEmbeddings,
                 speaker_features: speakerFeatures
             });
 
-            console.log('Decoder output keys:', Object.keys(decoderOutputs));
-
-            // The output might be named differently - check all possible names
             const audioOutput = decoderOutputs.audio || decoderOutputs.wav || decoderOutputs.output || decoderOutputs[Object.keys(decoderOutputs)[0]];
-
             if (!audioOutput) {
                 throw new Error(`No audio output found. Available outputs: ${Object.keys(decoderOutputs).join(', ')}`);
             }
 
-            console.log('Audio output shape:', audioOutput.dims);
+            // Squeeze to 1D array (Python does this automatically)
             const audioArray = Float32Array.from(audioOutput.data);
 
-            console.log('Generated audio samples (with padding):', audioArray.length);
-
-            // HACK: Trim padding from start and end
-            // Each silence token generates approximately 100 samples (24kHz / 240 tokens per second)
-            // We added PADDING_SILENCE_TOKENS at start and end, so trim accordingly
-            const SAMPLES_PER_TOKEN = 100; // Approximate
-            const trimSamplesStart = PADDING_SILENCE_TOKENS * SAMPLES_PER_TOKEN;
-            const trimSamplesEnd = PADDING_SILENCE_TOKENS * SAMPLES_PER_TOKEN;
-
-            // Ensure we don't trim more than available
-            const startIdx = Math.min(trimSamplesStart, Math.floor(audioArray.length * 0.1));
-            const endIdx = Math.max(audioArray.length - trimSamplesEnd, Math.floor(audioArray.length * 0.9));
-
-            const trimmedAudioArray = audioArray.slice(startIdx, endIdx);
-
-            console.log('Trimming padding hack:');
-            console.log('  Original length:', audioArray.length, 'samples');
-            console.log('  Trimmed from start:', startIdx, 'samples');
-            console.log('  Trimmed from end:', audioArray.length - endIdx, 'samples');
-            console.log('  Final length:', trimmedAudioArray.length, 'samples');
-            console.log('  Duration:', (trimmedAudioArray.length / SAMPLE_RATE).toFixed(2), 'seconds');
+            console.log('Audio decoding complete:');
+            console.log('  Raw audio samples:', audioArray.length);
+            console.log('  Duration:', (audioArray.length / SAMPLE_RATE).toFixed(2), 'seconds');
 
             progressCallback?.({
                 status: 'complete',
@@ -1011,9 +909,9 @@ export class ChatterboxTTSEngine {
             });
 
             return {
-                audio: trimmedAudioArray,
+                audio: audioArray,
                 sampleRate: SAMPLE_RATE,
-                duration: trimmedAudioArray.length / SAMPLE_RATE
+                duration: audioArray.length / SAMPLE_RATE
             };
 
         } catch (error) {
