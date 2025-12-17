@@ -235,12 +235,75 @@ export async function loadAudioFromFile(file) {
 
 // Convert blob to Float32Array for model input
 export async function blobToFloat32Array(blob) {
+    console.log('🎵 [Audio] Converting blob to Float32Array:', {
+        blobSize: blob.size,
+        blobType: blob.type
+    });
+
     const arrayBuffer = await blob.arrayBuffer();
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const audioContext = new AudioContextClass();
+
     try {
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        return audioBuffer.getChannelData(0);
+
+        console.log('  Original audio format:', {
+            sampleRate: audioBuffer.sampleRate,
+            channels: audioBuffer.numberOfChannels,
+            duration: audioBuffer.duration.toFixed(2) + 's'
+        });
+
+        // CRITICAL: Always resample to 24kHz mono for the model
+        let finalBuffer = audioBuffer;
+        if (audioBuffer.sampleRate !== SAMPLE_RATE || audioBuffer.numberOfChannels !== 1) {
+            console.log(`  ⚠ Resampling from ${audioBuffer.sampleRate}Hz to ${SAMPLE_RATE}Hz...`);
+
+            const offlineContext = new OfflineAudioContext(
+                1, // mono
+                Math.ceil(audioBuffer.duration * SAMPLE_RATE),
+                SAMPLE_RATE
+            );
+
+            const source = offlineContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(offlineContext.destination);
+            source.start();
+
+            finalBuffer = await offlineContext.startRendering();
+            if (typeof offlineContext.close === 'function') {
+                await offlineContext.close();
+            }
+
+            console.log(`  ✓ Resampled to ${SAMPLE_RATE}Hz`);
+        }
+
+        const audioData = finalBuffer.getChannelData(0);
+
+        // Calculate simple statistics to identify this audio
+        let sum = 0;
+        let sumSquared = 0;
+        for (let i = 0; i < audioData.length; i++) {
+            sum += audioData[i];
+            sumSquared += audioData[i] * audioData[i];
+        }
+        const mean = sum / audioData.length;
+        const variance = (sumSquared / audioData.length) - (mean * mean);
+        const rms = Math.sqrt(sumSquared / audioData.length);
+
+        console.log('✓ [Audio] Conversion complete:', {
+            sampleCount: audioData.length,
+            duration: finalBuffer.duration.toFixed(2) + 's',
+            sampleRate: finalBuffer.sampleRate,
+            channels: finalBuffer.numberOfChannels,
+            statistics: {
+                mean: mean.toFixed(6),
+                rms: rms.toFixed(6),
+                variance: variance.toFixed(6),
+                first10: Array.from(audioData.slice(0, 10).map(v => v.toFixed(4)))
+            }
+        });
+
+        return audioData;
     } finally {
         if (typeof audioContext.close === 'function') {
             await audioContext.close();

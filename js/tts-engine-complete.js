@@ -59,27 +59,112 @@ async function fetchJSONFromRepo(repoId, filename, progressCallback, progressVal
 }
 
 async function loadTokenizerForRepo(repoId, progressCallback) {
-    // Try loading directly like Python: AutoTokenizer.from_pretrained(MODEL_ID)
-    // This should load from HuggingFace with all emotion tags built-in
+    // Load tokenizer.json directly and parse it properly
     try {
-        progressCallback?.({ status: 'loading', message: 'Loading tokenizer from HuggingFace...', progress: 5 });
-        console.log(`Attempting to load tokenizer from ${repoId}...`);
+        progressCallback?.({ status: 'loading', message: 'Loading Chatterbox tokenizer...', progress: 5 });
+        console.log(`Loading tokenizer from ${repoId}...`);
 
-        const tokenizer = await AutoTokenizer.from_pretrained(repoId, {
-            legacy: true,
-            // Don't use local files, force download from HF
-            local_files_only: false
-        });
+        // Fetch tokenizer.json directly
+        const tokenizerUrl = `https://huggingface.co/${repoId}/resolve/main/tokenizer.json`;
+        const configUrl = `https://huggingface.co/${repoId}/resolve/main/tokenizer_config.json`;
 
-        console.log('✓ Tokenizer loaded successfully from HuggingFace');
-        console.log('  Vocab size:', tokenizer.vocab_size || tokenizer.model?.vocab?.length || 'unknown');
-        console.log('  Model max length:', tokenizer.model_max_length);
+        console.log('Fetching tokenizer files...');
+        const [tokenizerResponse, configResponse] = await Promise.all([
+            fetch(tokenizerUrl),
+            fetch(configUrl)
+        ]);
 
-        // Verify emotion tags are present by checking if [chuckle] tokenizes correctly
-        const testTokens = tokenizer('[chuckle]', { add_special_tokens: false });
-        console.log('  Test tokenization of "[chuckle]":', Array.from(testTokens.input_ids.data));
+        if (!tokenizerResponse.ok || !configResponse.ok) {
+            throw new Error('Failed to fetch tokenizer files');
+        }
 
-        return tokenizer;
+        const tokenizerData = await tokenizerResponse.json();
+        const tokenizerConfig = await configResponse.json();
+
+        console.log('✓ Tokenizer files loaded');
+        console.log('  Tokenizer type:', tokenizerConfig.tokenizer_class);
+        console.log('  Model max length:', tokenizerConfig.model_max_length);
+
+        // Extract vocabulary including emotion tags
+        // Emotion tags are in added_tokens, not model.vocab!
+        const baseVocab = tokenizerData.model.vocab;
+        const addedTokens = tokenizerData.added_tokens || [];
+
+        console.log('  Base vocabulary size:', Object.keys(baseVocab).length);
+        console.log('  Added tokens:', addedTokens.length);
+
+        // Merge base vocabulary with added tokens
+        const fullVocab = { ...baseVocab };
+        for (const addedToken of addedTokens) {
+            fullVocab[addedToken.content] = addedToken.id;
+        }
+
+        const vocabSize = Object.keys(fullVocab).length;
+        console.log('  Total vocabulary size:', vocabSize);
+
+        // Verify emotion tags are in the vocabulary
+        console.log('  Checking emotion tags in vocabulary:');
+        const emotionTags = {
+            '[chuckle]': 50274,
+            '[laugh]': 50275,
+            '[sigh]': 50268,
+            '[gasp]': 50273,
+            '[angry]': 50257,
+            '[happy]': 50265
+        };
+
+        let allTagsPresent = true;
+        for (const [tag, expectedId] of Object.entries(emotionTags)) {
+            const actualId = fullVocab[tag];
+            if (actualId === expectedId) {
+                console.log(`    ✓ ${tag} = ${actualId}`);
+            } else {
+                console.warn(`    ✗ ${tag} expected ${expectedId}, got ${actualId}`);
+                allTagsPresent = false;
+            }
+        }
+
+        if (!allTagsPresent) {
+            throw new Error('Emotion tags not found in vocabulary');
+        }
+
+        // Update the tokenizer data with merged vocabulary
+        tokenizerData.model.vocab = fullVocab;
+
+        // Try to create tokenizer using the PreTrainedTokenizer class directly
+        // Get the tokenizer class from Transformers.js
+        const TokenizerClass = AutoTokenizer.TOKENIZER_CLASS_MAPPING['GPT2Tokenizer'] ||
+                               AutoTokenizer.TOKENIZER_CLASS_MAPPING['PreTrainedTokenizer'];
+
+        if (!TokenizerClass) {
+            throw new Error('Could not find GPT2Tokenizer class');
+        }
+
+        console.log('  Creating tokenizer instance with Chatterbox vocabulary...');
+
+        // Create tokenizer with the Chatterbox data
+        const tokenizer = new TokenizerClass(tokenizerData, tokenizerConfig);
+
+        // Test emotion tag tokenization
+        const testText = '[chuckle]';
+        try {
+            const testTokens = tokenizer(testText, { add_special_tokens: false });
+            const testIds = Array.from(testTokens.input_ids.data).map(id => Number(id));
+            console.log(`  Test tokenization of "${testText}":`, testIds);
+
+            if (testIds.length === 1 && testIds[0] === 50274) {
+                console.log('  ✓ Emotion tags working perfectly with native tokenizer!');
+                tokenizer.vocab_size = vocabSize;
+                return tokenizer;
+            } else {
+                console.warn('  ⚠ Emotion tags not working correctly, got:', testIds);
+                throw new Error('Emotion tag tokenization failed');
+            }
+        } catch (testError) {
+            console.warn('  Test tokenization failed:', testError.message);
+            throw testError;
+        }
+
     } catch (err) {
         console.warn(`Failed to load tokenizer from ${repoId}:`, err.message);
         console.log('Falling back to GPT-2 + manual emotion tags');
@@ -360,7 +445,7 @@ export class ChatterboxTTSEngine {
             // Convert BigInt to Number for easier handling
             let inputIds = Array.from(textInputs.input_ids.data).map(id => Number(id));
 
-            console.log('Text tokenization (raw):');
+            console.log('Text tokenization:');
             console.log('  Input text:', text);
             console.log('  Token IDs:', inputIds);
             console.log('  Token count:', inputIds.length);
@@ -368,7 +453,8 @@ export class ChatterboxTTSEngine {
             // Check if emotion tags are being tokenized (they should be in range 50257-50275)
             const emotionTokens = inputIds.filter(id => id >= 50257 && id <= 50275);
             if (emotionTokens.length > 0) {
-                console.log('  ✓ Found', emotionTokens.length, 'emotion tag tokens:', emotionTokens);
+                console.log('  ✓ Native tokenizer - Found', emotionTokens.length, 'emotion tag tokens:', emotionTokens);
+                // Emotion tags are already properly tokenized, no manual insertion needed!
             } else {
                 console.log('  ⚠ No emotion tags detected, attempting manual fix...');
 
@@ -395,52 +481,63 @@ export class ChatterboxTTSEngine {
 
                 if (emotionTagsFound.length > 0) {
                     console.log('  Found emotion tags in text:', emotionTagsFound);
+                    console.log('  Attempting smarter token replacement...');
 
-                    // Better approach: tokenize first part with special tokens, rest without
-                    let currentText = text;
-                    const tagPositions = [];
-
-                    // Find all emotion tag positions
+                    // Better approach: tokenize each emotion tag with and without leading space
+                    // GPT-2 tokenizer is context-sensitive, so "[tag]" and " [tag]" tokenize differently
+                    const emotionTagSequences = {};
                     for (const tag of emotionTagsFound) {
-                        const pos = currentText.indexOf(tag);
-                        if (pos !== -1) {
-                            tagPositions.push({ tag, pos });
+                        // Try without leading space
+                        const tagTokens = await this.tokenizer(tag, { add_special_tokens: false });
+                        const seqWithoutSpace = Array.from(tagTokens.input_ids.data).map(id => Number(id));
+
+                        // Try with leading space (more common in context)
+                        const tagTokensWithSpace = await this.tokenizer(' ' + tag, { add_special_tokens: false });
+                        const seqWithSpace = Array.from(tagTokensWithSpace.input_ids.data).map(id => Number(id));
+
+                        emotionTagSequences[tag] = {
+                            withoutSpace: seqWithoutSpace,
+                            withSpace: seqWithSpace
+                        };
+                        console.log(`  ${tag} tokenizes to:`, seqWithoutSpace);
+                        console.log(`  ${tag} with leading space tokenizes to:`, seqWithSpace);
+                    }
+
+                    // Now find and replace these sequences in the original inputIds
+                    let newInputIds = [...inputIds];
+                    for (const tag of emotionTagsFound) {
+                        const sequences = emotionTagSequences[tag];
+                        const replacementToken = emotionTagMap[tag];
+
+                        // Try both variants
+                        for (const variant of [sequences.withSpace, sequences.withoutSpace]) {
+                            let found = false;
+
+                            // Find the sequence in newInputIds
+                            for (let i = 0; i <= newInputIds.length - variant.length; i++) {
+                                let match = true;
+                                for (let j = 0; j < variant.length; j++) {
+                                    if (newInputIds[i + j] !== variant[j]) {
+                                        match = false;
+                                        break;
+                                    }
+                                }
+
+                                if (match) {
+                                    // Replace the sequence with the single emotion token
+                                    newInputIds.splice(i, variant.length, replacementToken);
+                                    console.log(`  ✓ Replaced sequence at position ${i}:`, variant, '→', replacementToken);
+                                    found = true;
+                                    break; // Only replace first occurrence
+                                }
+                            }
+
+                            if (found) break; // Move to next tag
                         }
                     }
 
-                    // Sort by position
-                    tagPositions.sort((a, b) => a.pos - b.pos);
-
-                    // Split and tokenize
-                    inputIds = [];
-                    let lastPos = 0;
-                    let isFirstPart = true;
-
-                    for (const { tag, pos } of tagPositions) {
-                        const beforeText = text.substring(lastPos, pos);
-                        if (beforeText) {
-                            // First part gets special tokens, subsequent parts don't
-                            const beforeTokens = await this.tokenizer(beforeText, {
-                                add_special_tokens: isFirstPart
-                            });
-                            inputIds.push(...Array.from(beforeTokens.input_ids.data).map(id => Number(id)));
-                            isFirstPart = false;
-                        }
-                        // Add the emotion token
-                        inputIds.push(emotionTagMap[tag]);
-                        lastPos = pos + tag.length;
-                    }
-
-                    // Tokenize remaining text after last tag
-                    const remainingText = text.substring(lastPos);
-                    if (remainingText) {
-                        const remainingTokens = await this.tokenizer(remainingText, {
-                            add_special_tokens: isFirstPart
-                        });
-                        inputIds.push(...Array.from(remainingTokens.input_ids.data).map(id => Number(id)));
-                    }
-
-                    console.log('  Emotion tags manually inserted at correct positions');
+                    inputIds = newInputIds;
+                    console.log('  Token replacement complete');
                     console.log('  New token IDs:', inputIds);
                     console.log('  New token count:', inputIds.length);
                 }
@@ -453,19 +550,26 @@ export class ChatterboxTTSEngine {
             let audioMin = audioData[0];
             let audioMax = audioData[0];
             let audioSum = 0;
+            let audioSumSquared = 0;
             for (let i = 0; i < audioData.length; i++) {
                 const sample = audioData[i];
                 if (sample < audioMin) audioMin = sample;
                 if (sample > audioMax) audioMax = sample;
                 audioSum += sample;
+                audioSumSquared += sample * sample;
             }
             const audioMean = audioSum / audioData.length;
+            const audioVariance = (audioSumSquared / audioData.length) - (audioMean * audioMean);
+            const audioRMS = Math.sqrt(audioSumSquared / audioData.length);
 
-            console.log('Input audio statistics:');
+            console.log('🎤 [TTS] Input voice audio fingerprint:');
             console.log('  Length:', audioData.length, 'samples');
             console.log('  Duration:', (audioData.length / SAMPLE_RATE).toFixed(2), 'seconds');
             console.log('  Min:', audioMin.toFixed(4), 'Max:', audioMax.toFixed(4));
-            console.log('  Mean:', audioMean.toFixed(4));
+            console.log('  Mean:', audioMean.toFixed(6));
+            console.log('  RMS:', audioRMS.toFixed(6));
+            console.log('  Variance:', audioVariance.toFixed(6));
+            console.log('  First 10 samples:', Array.from(audioData.slice(0, 10).map(v => v.toFixed(4))));
 
             const audioTensor = new ort.Tensor('float32', audioData, [1, audioData.length]);
 

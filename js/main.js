@@ -206,10 +206,12 @@ function setupHomePageEvents() {
     document.getElementById('voice-selector').addEventListener('change', (e) => {
         const voiceId = parseInt(e.target.value);
         state.selectedVoice = state.voices.find(v => v.id === voiceId);
-        console.log('Voice selected from dropdown:', {
+        console.log('🎯 [UI] Voice selected from dropdown:', {
             id: state.selectedVoice?.id,
             name: state.selectedVoice?.name,
-            hasAudio: !!state.selectedVoice?.audioBlob
+            hasAudio: !!state.selectedVoice?.audioBlob,
+            audioBlobSize: state.selectedVoice?.audioBlob?.size || 0,
+            audioBlobType: state.selectedVoice?.audioBlob?.type || 'unknown'
         });
     });
 
@@ -421,12 +423,19 @@ async function loadVoices() {
 
 function updateVoiceSelector() {
     const selector = document.getElementById('voice-selector');
+
+    console.log('🔄 [UI] Updating voice selector with', state.voices.length, 'voices:');
+    state.voices.forEach(voice => {
+        console.log(`  - ID ${voice.id}: "${voice.name}" (${voice.audioBlob ? voice.audioBlob.size + ' bytes' : 'no audio'})`);
+    });
+
     selector.innerHTML = state.voices.map(voice => `
         <option value="${voice.id}">${escapeHtml(voice.name)}</option>
     `).join('');
 
     if (state.selectedVoice) {
         selector.value = state.selectedVoice.id;
+        console.log('  Selected voice:', state.selectedVoice.name, '(ID:', state.selectedVoice.id + ')');
     }
 }
 
@@ -730,6 +739,14 @@ function setupModalEvents() {
         }
 
         try {
+            console.log('💾 [UI] Saving new voice:', {
+                name,
+                description,
+                blobSize: state.recordedAudio.blob.size,
+                blobType: state.recordedAudio.blob.type,
+                duration: state.recordedAudio.duration
+            });
+
             const voice = {
                 name,
                 description,
@@ -740,6 +757,8 @@ function setupModalEvents() {
             const id = await db.addVoice(voice);
             voice.id = id;
             state.voices.push(voice);
+
+            console.log('✓ [UI] Voice saved with ID:', id);
 
             updateVoiceSelector();
             renderVoiceLibrary();

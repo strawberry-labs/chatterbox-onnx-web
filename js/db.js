@@ -55,10 +55,26 @@ class Database {
             createdAt: Date.now()
         };
 
+        // Add diagnostic logging
+        console.log('📦 [DB] Storing voice in IndexedDB:', {
+            name: voiceData.name,
+            description: voiceData.description,
+            blobSize: voiceData.audioBlob?.size || 0,
+            blobType: voiceData.audioBlob?.type || 'unknown',
+            hasDuration: !!voiceData.duration,
+            duration: voiceData.duration
+        });
+
         return new Promise((resolve, reject) => {
             const request = store.add(voiceData);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                console.log('✓ [DB] Voice stored successfully with ID:', request.result);
+                resolve(request.result);
+            };
+            request.onerror = () => {
+                console.error('✗ [DB] Failed to store voice:', request.error);
+                reject(request.error);
+            };
         });
     }
 
@@ -68,8 +84,21 @@ class Database {
 
         return new Promise((resolve, reject) => {
             const request = store.get(id);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const voice = request.result;
+                console.log('📤 [DB] Retrieved voice from IndexedDB:', {
+                    id: voice?.id,
+                    name: voice?.name,
+                    blobSize: voice?.audioBlob?.size || 0,
+                    blobType: voice?.audioBlob?.type || 'unknown',
+                    duration: voice?.duration
+                });
+                resolve(voice);
+            };
+            request.onerror = () => {
+                console.error('✗ [DB] Failed to retrieve voice:', request.error);
+                reject(request.error);
+            };
         });
     }
 
@@ -79,8 +108,19 @@ class Database {
 
         return new Promise((resolve, reject) => {
             const request = store.getAll();
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const voices = request.result;
+                console.log('📤 [DB] Retrieved all voices from IndexedDB:', voices.map(v => ({
+                    id: v.id,
+                    name: v.name,
+                    blobSize: v.audioBlob?.size || 0
+                })));
+                resolve(voices);
+            };
+            request.onerror = () => {
+                console.error('✗ [DB] Failed to retrieve voices:', request.error);
+                reject(request.error);
+            };
         });
     }
 
