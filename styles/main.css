@@ -241,9 +241,21 @@ body {
     margin-bottom: 8px;
 }
 
-.page-subtitle {
-    font-size: 16px;
+.page-headline {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.headline-line.primary {
+    font-size: 32px;
+    font-weight: 600;
+}
+
+.headline-line.secondary {
+    font-size: 18px;
     color: var(--text-secondary);
+    font-weight: 500;
 }
 
 .page-header .btn-primary {
@@ -283,6 +295,17 @@ body {
 .card-header h2 {
     font-size: 18px;
     font-weight: 600;
+}
+
+.control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.control-grid .card {
+    margin-bottom: 0;
 }
 
 /* Voice Selector */

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChatterboxWeb - In-browser Voice Cloning</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
     <link rel="stylesheet" href="./styles/main.css">
 </head>
 <body>
@@ -22,27 +23,15 @@
 
             <nav class="nav-menu">
                 <button class="nav-item active" data-page="home">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M3 10L10 3L17 10V17H12V13H8V17H3V10Z" fill="currentColor"/>
-                    </svg>
+                    <i class="ti ti-home"></i>
                     <span>Home</span>
                 </button>
                 <button class="nav-item" data-page="library">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <rect x="3" y="3" width="4" height="4" fill="currentColor"/>
-                        <rect x="8" y="3" width="4" height="4" fill="currentColor"/>
-                        <rect x="13" y="3" width="4" height="4" fill="currentColor"/>
-                        <rect x="3" y="8" width="4" height="4" fill="currentColor"/>
-                        <rect x="8" y="8" width="4" height="4" fill="currentColor"/>
-                        <rect x="13" y="8" width="4" height="4" fill="currentColor"/>
-                    </svg>
+                    <i class="ti ti-stack-2"></i>
                     <span>Voice Library</span>
                 </button>
                 <button class="nav-item" data-page="history">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M10 18C14.418 18 18 14.418 18 10C18 5.582 14.418 2 10 2C5.582 2 2 5.582 2 10C2 14.418 5.582 18 10 18Z" stroke="currentColor" stroke-width="2" fill="none"/>
-                        <path d="M10 6V10L13 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
+                    <i class="ti ti-clock"></i>
                     <span>History</span>
                 </button>
             </nav>
@@ -71,34 +60,69 @@
             <!-- Home Page -->
             <div class="page active" id="home-page">
                 <header class="page-header">
-                    <h1>In-browser voice cloning with Chatterbox Turbo</h1>
-                    <p class="page-subtitle">Select or clone a voice, write your script, and generate premium-quality audio.</p>
+                    <h1 class="page-headline">
+                        <span class="headline-line primary">In-browser voice cloning with Chatterbox Turbo</span>
+                        <span class="headline-line secondary">Select or clone a voice, write your script, and generate premium-quality audio.</span>
+                    </h1>
                 </header>
 
                 <div class="generation-container">
-                    <!-- Voice Selection -->
-                    <section class="card">
-                        <div class="card-header">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                <path d="M8 10C9.105 10 10 9.105 10 8V4C10 2.895 9.105 2 8 2C6.895 2 6 2.895 6 4V8C6 9.105 6.895 10 8 10Z" fill="currentColor"/>
-                            </svg>
-                            <h2>Voice</h2>
-                        </div>
-                        <div class="voice-selector-container">
-                            <select class="voice-selector" id="voice-selector">
-                                <option value="ethan">Ethan</option>
-                            </select>
-                            <button class="btn btn-primary" id="create-voice-btn">Create new voice</button>
-                        </div>
-                    </section>
+                    <div class="control-grid">
+                        <!-- Voice Selection -->
+                        <section class="card control-card">
+                            <div class="card-header">
+                                <i class="ti ti-microphone"></i>
+                                <h2>Voice</h2>
+                            </div>
+                            <div class="voice-selector-container">
+                                <select class="voice-selector" id="voice-selector">
+                                    <option value="ethan">Ethan</option>
+                                </select>
+                                <button class="btn btn-icon" id="preview-voice-btn" title="Preview voice">
+                                    <i class="ti ti-player-play voice-play-icon"></i>
+                                    <i class="ti ti-player-pause voice-pause-icon" style="display: none;"></i>
+                                </button>
+                                <button class="btn btn-primary" id="create-voice-btn">Create new voice</button>
+                            </div>
+                        </section>
+
+                        <!-- Temperature -->
+                        <section class="card control-card">
+                            <div class="card-header">
+                                <i class="ti ti-adjustments"></i>
+                                <h2>Style</h2>
+                            </div>
+                            <div class="control-group">
+                                <label class="control-label">
+                                    <span>Temperature</span>
+                                    <span class="control-value" id="temp-value">0.20</span>
+                                </label>
+                                <p class="control-desc">Increase randomness and variation.</p>
+                                <input type="range" class="slider" id="temperature-slider" min="0" max="2" step="0.01" value="0.20">
+                            </div>
+                        </section>
+
+                        <!-- Repetition Penalty -->
+                        <section class="card control-card">
+                            <div class="card-header">
+                                <i class="ti ti-repeat"></i>
+                                <h2>Repetition Penalty</h2>
+                            </div>
+                            <div class="control-group">
+                                <label class="control-label">
+                                    <span>Penalty</span>
+                                    <span class="control-value" id="rep-value">1.20</span>
+                                </label>
+                                <p class="control-desc">Penalize repeated speech patterns to enhance diversity.</p>
+                                <input type="range" class="slider" id="repetition-slider" min="1" max="2" step="0.01" value="1.20">
+                            </div>
+                        </section>
+                    </div>
 
                     <!-- Text Input -->
                     <section class="card">
                         <div class="card-header">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                <rect x="2" y="4" width="12" height="2" fill="currentColor"/>
-                                <rect x="2" y="8" width="8" height="2" fill="currentColor"/>
-                            </svg>
+                            <i class="ti ti-file-text"></i>
                             <h2>Text</h2>
                         </div>
                         <div class="text-input-wrapper">
@@ -137,41 +161,8 @@
                                 <button class="tag-btn">laugh</button>
                             </div>
                         </div>
-                    </section>
-
-                    <!-- Style Controls -->
-                    <section class="card">
-                        <div class="card-header">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                <path d="M12 2L14 8L12 14L6 12L2 8L6 4L12 2Z" fill="currentColor"/>
-                            </svg>
-                            <h2>Style</h2>
-                        </div>
-
-                        <div class="controls-row">
-                            <div class="control-group">
-                                <label class="control-label">
-                                    <span>Temperature</span>
-                                    <span class="control-value" id="temp-value">0.20</span>
-                                </label>
-                                <p class="control-desc">Increase randomness and variation.</p>
-                                <input type="range" class="slider" id="temperature-slider" min="0" max="2" step="0.01" value="0.20">
-                            </div>
-
-                            <div class="control-group">
-                                <label class="control-label">
-                                    <span>Repetition Penalty</span>
-                                    <span class="control-value" id="rep-value">1.20</span>
-                                </label>
-                                <p class="control-desc">Penalize repeated speech patterns to enhance diversity.</p>
-                                <input type="range" class="slider" id="repetition-slider" min="1" max="2" step="0.01" value="1.20">
-                            </div>
-                        </div>
-
                         <button class="btn btn-generate" id="generate-btn">
-                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                                <path d="M10 2L13 8L10 14L4 11L2 6L6 4L10 2Z" fill="currentColor"/>
-                            </svg>
+                            <i class="ti ti-wand"></i>
                             Generate
                         </button>
                     </section>
@@ -182,10 +173,7 @@
                         <div class="audio-player-container">
                             <audio controls class="audio-player" id="audio-player"></audio>
                             <button class="btn btn-icon" id="download-btn" title="Download">
-                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                                    <path d="M10 12L6 8H8V4H12V8H14L10 12Z" fill="currentColor"/>
-                                    <path d="M16 14V16H4V14H2V16C2 17.1 2.9 18 4 18H16C17.1 18 18 17.1 18 16V14H16Z" fill="currentColor"/>
-                                </svg>
+                                <i class="ti ti-download"></i>
                             </button>
                         </div>
                     </section>
@@ -243,10 +231,7 @@
             <p class="modal-divider">or capture a new sample</p>
 
             <button class="upload-option upload-option-primary" id="record-btn">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <path d="M10 13C11.66 13 13 11.66 13 10V5C13 3.34 11.66 2 10 2C8.34 2 7 3.34 7 5V10C7 11.66 8.34 13 10 13Z" fill="white"/>
-                    <path d="M15 10C15 12.76 12.76 15 10 15C7.24 15 5 12.76 5 10H3C3 13.53 5.61 16.43 9 16.92V20H11V16.92C14.39 16.43 17 13.53 17 10H15Z" fill="white"/>
-                </svg>
+                <i class="ti ti-microphone" style="font-size: 20px;"></i>
                 <span>Record with Microphone (1–60s)</span>
             </button>
 

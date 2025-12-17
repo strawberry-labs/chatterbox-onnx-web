@@ -317,6 +317,14 @@ function setupHomePageEvents() {
             audioBlobSize: state.selectedVoice?.audioBlob?.size || 0,
             audioBlobType: state.selectedVoice?.audioBlob?.type || 'unknown'
         });
+        updatePreviewButton();
+    });
+
+    // Preview voice button
+    document.getElementById('preview-voice-btn').addEventListener('click', () => {
+        if (state.selectedVoice) {
+            playVoice(state.selectedVoice.id);
+        }
     });
 
     // Create voice button
@@ -541,6 +549,29 @@ function updateVoiceSelector() {
         selector.value = state.selectedVoice.id;
         console.log('  Selected voice:', state.selectedVoice.name, '(ID:', state.selectedVoice.id + ')');
     }
+
+    updatePreviewButton();
+}
+
+function updatePreviewButton() {
+    const previewBtn = document.getElementById('preview-voice-btn');
+    if (!previewBtn) return;
+
+    const playIcon = previewBtn.querySelector('.voice-play-icon');
+    const pauseIcon = previewBtn.querySelector('.voice-pause-icon');
+
+    const isPlaying = state.selectedVoice &&
+                     state.activeVoicePreview?.voiceId === state.selectedVoice.id &&
+                     state.activeVoicePreview?.audio &&
+                     !state.activeVoicePreview.audio.paused;
+
+    if (isPlaying) {
+        playIcon.style.display = 'none';
+        pauseIcon.style.display = 'inline';
+    } else {
+        playIcon.style.display = 'inline';
+        pauseIcon.style.display = 'none';
+    }
 }
 
 function renderVoiceLibrary() {
@@ -570,38 +601,40 @@ function renderVoiceLibrary() {
         return;
     }
 
-    grid.innerHTML = voicesToRender.map(voice => `
+    const isPlaying = (voiceId) => state.activeVoicePreview?.voiceId === voiceId &&
+                                   state.activeVoicePreview?.audio &&
+                                   !state.activeVoicePreview.audio.paused;
+
+    grid.innerHTML = voicesToRender.map(voice => {
+        const playing = isPlaying(voice.id);
+        return `
         <div class="voice-card ${state.selectedVoice?.id === voice.id ? 'selected' : ''}" data-voice-id="${voice.id}">
             <div class="voice-card-header">
                 <div class="voice-avatar">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                        <path d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z" fill="currentColor"/>
-                    </svg>
+                    <i class="ti ti-user" style="font-size: 24px;"></i>
                 </div>
                 <div class="voice-info">
                     <div class="voice-name">${escapeHtml(voice.name)}</div>
                     <div class="voice-desc">${escapeHtml(voice.description || 'No description')}</div>
                 </div>
                 <div class="voice-selected-indicator">
-                    ${state.selectedVoice?.id === voice.id ? '✓' : ''}
+                    ${state.selectedVoice?.id === voice.id ? '<i class="ti ti-check"></i>' : ''}
                 </div>
             </div>
             <div class="voice-actions">
-                <button class="voice-action-btn play-voice" data-voice-id="${voice.id}">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M5 3L13 8L5 13V3Z" fill="currentColor"/>
-                    </svg>
-                    Play
+                <button class="voice-action-btn play-voice ${playing ? 'playing' : ''}" data-voice-id="${voice.id}">
+                    <i class="ti ti-player-play voice-play-icon" style="${playing ? 'display: none;' : ''}"></i>
+                    <i class="ti ti-player-pause voice-pause-icon" style="${playing ? '' : 'display: none;'}"></i>
+                    <span class="voice-play-text">${playing ? 'Pause' : 'Play'}</span>
                 </button>
                 <button class="voice-action-btn delete-voice" data-voice-id="${voice.id}">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path d="M4 6V14H12V6H4ZM6 3H10L11 4H13V6H3V4H5L6 3Z" fill="currentColor"/>
-                    </svg>
+                    <i class="ti ti-trash"></i>
                     Delete
                 </button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
     // Add event listeners
     document.querySelectorAll('.voice-card').forEach(card => {
@@ -652,6 +685,25 @@ function selectVoice(voiceId) {
 }
 
 function playVoice(voiceId) {
+    // If this voice is already playing, pause it
+    if (state.activeVoicePreview?.voiceId === voiceId) {
+        if (state.activeVoicePreview.audio.paused) {
+            // Resume playback
+            state.activeVoicePreview.audio.play().catch(error => {
+                console.error('Error resuming voice preview:', error);
+                cleanupVoicePreview();
+                renderVoiceLibrary();
+                updatePreviewButton();
+            });
+        } else {
+            // Pause playback
+            state.activeVoicePreview.audio.pause();
+        }
+        renderVoiceLibrary();
+        updatePreviewButton();
+        return;
+    }
+
     const voice = state.voices.find(v => v.id === voiceId);
 
     if (voice && voice.audioBlob) {
@@ -660,13 +712,22 @@ function playVoice(voiceId) {
         const audio = new Audio(url);
         state.activeVoicePreview = { audio, url, voiceId };
 
+        const onPlayStateChange = () => {
+            renderVoiceLibrary();
+            updatePreviewButton();
+        };
+
         const releaseUrl = () => {
             if (state.activeVoicePreview?.url === url) {
                 state.activeVoicePreview = null;
             }
             URL.revokeObjectURL(url);
+            renderVoiceLibrary();
+            updatePreviewButton();
         };
 
+        audio.addEventListener('play', onPlayStateChange);
+        audio.addEventListener('pause', onPlayStateChange);
         audio.addEventListener('ended', releaseUrl, { once: true });
         audio.addEventListener('error', releaseUrl, { once: true });
 
@@ -674,6 +735,9 @@ function playVoice(voiceId) {
             console.error('Error playing voice preview:', error);
             releaseUrl();
         });
+
+        renderVoiceLibrary();
+        updatePreviewButton();
     }
 }
 
@@ -716,19 +780,14 @@ function renderHistory() {
         <div class="history-entry" data-history-id="${entry.id}">
             <div class="history-header">
                 <div class="history-icon">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
-                        <path d="M10 6V10L13 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                    </svg>
+                    <i class="ti ti-clock" style="font-size: 20px;"></i>
                 </div>
                 <div class="history-meta">
                     <div class="history-date">${new Date(entry.timestamp).toLocaleString()}</div>
                     <div class="history-title">History Entry</div>
                 </div>
                 <button class="history-delete" data-history-id="${entry.id}">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M5 7V17H15V7H5ZM7 4H13L14 5H17V7H3V5H6L7 4Z" fill="currentColor"/>
-                    </svg>
+                    <i class="ti ti-trash" style="font-size: 20px;"></i>
                 </button>
             </div>
             <div class="history-text">${safeText}</div>
