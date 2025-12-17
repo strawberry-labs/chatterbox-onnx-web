@@ -4,6 +4,11 @@ export default defineConfig({
     server: {
         port: 5173,
         open: true,
+        allowedHosts: [
+            'localhost',
+            '.trycloudflare.com',  // Allow all Cloudflare tunnel subdomains
+            '.ngrok.io'            // Also allow ngrok if needed
+        ],
         headers: {
             // Required for ONNX Runtime Web with WebGPU
             'Cross-Origin-Opener-Policy': 'same-origin',

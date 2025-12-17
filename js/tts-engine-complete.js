@@ -506,6 +506,7 @@ export class ChatterboxTTSEngine {
                     }
 
                     // Now find and replace these sequences in the original inputIds
+                    // FIXED: Replace ALL occurrences, not just first one per variant
                     let newInputIds = [...inputIds];
                     let totalReplacements = 0;
                     for (const tag of emotionTagsFound) {
@@ -517,25 +518,30 @@ export class ChatterboxTTSEngine {
                         for (const variant of [sequences.withSpace, sequences.withoutSpace]) {
                             if (!variant || variant.length === 0) continue;
 
-                            // Find every occurrence of the variant sequence
-                            for (let i = 0; i <= newInputIds.length - variant.length;) {
-                                let match = true;
-                                for (let j = 0; j < variant.length; j++) {
-                                    if (newInputIds[i + j] !== variant[j]) {
-                                        match = false;
-                                        break;
-                                    }
-                                }
+                            // Keep scanning until NO MORE matches are found
+                            let foundAny = true;
+                            while (foundAny) {
+                                foundAny = false;
 
-                                if (match) {
-                                    // Replace the sequence with the single emotion token
-                                    newInputIds.splice(i, variant.length, replacementToken);
-                                    replacementsForTag++;
-                                    totalReplacements++;
-                                    console.log(`  ✓ Replaced sequence at position ${i}:`, variant, '→', replacementToken);
-                                    i += 1; // Continue scanning after the inserted token
-                                } else {
-                                    i++;
+                                // Find every occurrence of the variant sequence
+                                for (let i = 0; i <= newInputIds.length - variant.length; i++) {
+                                    let match = true;
+                                    for (let j = 0; j < variant.length; j++) {
+                                        if (newInputIds[i + j] !== variant[j]) {
+                                            match = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if (match) {
+                                        // Replace the sequence with the single emotion token
+                                        newInputIds.splice(i, variant.length, replacementToken);
+                                        replacementsForTag++;
+                                        totalReplacements++;
+                                        console.log(`  ✓ Replaced sequence at position ${i}:`, variant, '→', replacementToken);
+                                        foundAny = true;
+                                        break; // Restart scan after modification
+                                    }
                                 }
                             }
                         }
@@ -814,32 +820,48 @@ export class ChatterboxTTSEngine {
                 }
 
                 // Update KV cache for next iteration
-                // CRITICAL: Clone tensors to prevent WebGPU buffer reuse corruption
+                // CRITICAL: Deep copy to prevent WebGPU buffer reuse corruption
+                // Based on ONNX Runtime Web docs: "User must ensure buffer is valid during inference"
+                // We must copy GPU data to CPU before the next session.run() reuses buffers
                 for (let i = 0; i < NUM_LAYERS; i++) {
                     const presentKey = lmOutputs[`present.${i}.key`];
                     const presentValue = lmOutputs[`present.${i}.value`];
 
                     if (presentKey) {
-                        // Deep copy the buffer data
+                        // AGGRESSIVE COPY: Force GPU->CPU transfer with .slice()
+                        const srcData = presentKey.data;
                         const keyData = presentKey.type === 'float16'
-                            ? new Uint16Array(presentKey.data)
-                            : new Float32Array(presentKey.data);
+                            ? new Uint16Array(srcData.length)
+                            : new Float32Array(srcData.length);
+
+                        // Element-by-element copy to guarantee data transfer
+                        for (let j = 0; j < srcData.length; j++) {
+                            keyData[j] = srcData[j];
+                        }
+
                         pastKeyValues[`past_key_values.${i}.key`] = new ort.Tensor(
                             presentKey.type,
                             keyData,
-                            presentKey.dims
+                            [...presentKey.dims]  // Clone dimensions array too
                         );
                     }
 
                     if (presentValue) {
-                        // Deep copy the buffer data
+                        // AGGRESSIVE COPY: Force GPU->CPU transfer with .slice()
+                        const srcData = presentValue.data;
                         const valueData = presentValue.type === 'float16'
-                            ? new Uint16Array(presentValue.data)
-                            : new Float32Array(presentValue.data);
+                            ? new Uint16Array(srcData.length)
+                            : new Float32Array(srcData.length);
+
+                        // Element-by-element copy to guarantee data transfer
+                        for (let j = 0; j < srcData.length; j++) {
+                            valueData[j] = srcData[j];
+                        }
+
                         pastKeyValues[`past_key_values.${i}.value`] = new ort.Tensor(
                             presentValue.type,
                             valueData,
-                            presentValue.dims
+                            [...presentValue.dims]  // Clone dimensions array too
                         );
                     }
                 }
@@ -856,7 +878,17 @@ export class ChatterboxTTSEngine {
                     input_ids: nextTokenTensor
                 });
 
-                currentInputsEmbeds = nextEmbedOutputs.inputs_embeds;
+                // CRITICAL: Clone embeddings too - same buffer reuse issue
+                const embedSrc = nextEmbedOutputs.inputs_embeds.data;
+                const embedData = new Float32Array(embedSrc.length);
+                for (let j = 0; j < embedSrc.length; j++) {
+                    embedData[j] = embedSrc[j];
+                }
+                currentInputsEmbeds = new ort.Tensor(
+                    'float32',
+                    embedData,
+                    [...nextEmbedOutputs.inputs_embeds.dims]
+                );
 
                 // Update attention mask and position IDs
                 // CRITICAL: Concatenate with existing mask, don't create new one
@@ -890,6 +922,18 @@ export class ChatterboxTTSEngine {
             console.log('  Last 10 speech tokens:', speechTokens.slice(-10));
             console.log('  Last speech token:', speechTokens[speechTokens.length - 1]);
 
+            // HACK: Add padding silence tokens at start and end to prevent corruption
+            // We'll trim the corresponding audio samples later
+            const PADDING_SILENCE_TOKENS = 5; // ~0.5 seconds of silence padding at each end
+            const paddingStart = new Array(PADDING_SILENCE_TOKENS).fill(SILENCE_TOKEN);
+            const paddingEnd = new Array(PADDING_SILENCE_TOKENS).fill(SILENCE_TOKEN);
+            const paddedSpeechTokens = [...paddingStart, ...speechTokens, ...paddingEnd];
+
+            console.log('Applied padding hack:');
+            console.log('  Original speech tokens:', speechTokens.length);
+            console.log('  Padded speech tokens:', paddedSpeechTokens.length);
+            console.log('  Padding:', PADDING_SILENCE_TOKENS, 'silence tokens at start and', PADDING_SILENCE_TOKENS, 'at end');
+
             // Step 7: Decode to audio
             progressCallback?.({ status: 'decoding', message: 'Decoding to audio waveform...' });
 
@@ -900,16 +944,16 @@ export class ChatterboxTTSEngine {
 
             console.log('Token sequence composition:');
             console.log('  Prompt tokens:', promptTokenData.length);
-            console.log('  Generated speech tokens:', speechTokens.length);
+            console.log('  Padded speech tokens:', paddedSpeechTokens.length);
             if (promptTokenData.length > 0) {
                 console.log('  First 5 prompt tokens:', promptTokenData.slice(0, 5));
             }
-            if (speechTokens.length > 0) {
-                console.log('  First 5 generated tokens:', speechTokens.slice(0, 5));
+            if (paddedSpeechTokens.length > 0) {
+                console.log('  First 5 padded tokens:', paddedSpeechTokens.slice(0, 5));
             }
 
             const silenceTokens = new Array(3).fill(SILENCE_TOKEN);
-            const finalTokens = [...promptTokenData, ...speechTokens, ...silenceTokens];
+            const finalTokens = [...promptTokenData, ...paddedSpeechTokens, ...silenceTokens];
 
             console.log('  Silence tokens:', silenceTokens.length);
             console.log('  Total sequence length:', finalTokens.length);
@@ -938,7 +982,27 @@ export class ChatterboxTTSEngine {
             console.log('Audio output shape:', audioOutput.dims);
             const audioArray = Float32Array.from(audioOutput.data);
 
-            console.log('Generated audio samples:', audioArray.length);
+            console.log('Generated audio samples (with padding):', audioArray.length);
+
+            // HACK: Trim padding from start and end
+            // Each silence token generates approximately 100 samples (24kHz / 240 tokens per second)
+            // We added PADDING_SILENCE_TOKENS at start and end, so trim accordingly
+            const SAMPLES_PER_TOKEN = 100; // Approximate
+            const trimSamplesStart = PADDING_SILENCE_TOKENS * SAMPLES_PER_TOKEN;
+            const trimSamplesEnd = PADDING_SILENCE_TOKENS * SAMPLES_PER_TOKEN;
+
+            // Ensure we don't trim more than available
+            const startIdx = Math.min(trimSamplesStart, Math.floor(audioArray.length * 0.1));
+            const endIdx = Math.max(audioArray.length - trimSamplesEnd, Math.floor(audioArray.length * 0.9));
+
+            const trimmedAudioArray = audioArray.slice(startIdx, endIdx);
+
+            console.log('Trimming padding hack:');
+            console.log('  Original length:', audioArray.length, 'samples');
+            console.log('  Trimmed from start:', startIdx, 'samples');
+            console.log('  Trimmed from end:', audioArray.length - endIdx, 'samples');
+            console.log('  Final length:', trimmedAudioArray.length, 'samples');
+            console.log('  Duration:', (trimmedAudioArray.length / SAMPLE_RATE).toFixed(2), 'seconds');
 
             progressCallback?.({
                 status: 'complete',
@@ -947,9 +1011,9 @@ export class ChatterboxTTSEngine {
             });
 
             return {
-                audio: audioArray,
+                audio: trimmedAudioArray,
                 sampleRate: SAMPLE_RATE,
-                duration: audioArray.length / SAMPLE_RATE
+                duration: trimmedAudioArray.length / SAMPLE_RATE
             };
 
         } catch (error) {
