@@ -4,6 +4,10 @@
 
 ![ChatterboxWeb Banner](https://storage.googleapis.com/chatterbox-demo-samples/turbo/turbo-banner.jpg)
 
+## Live Demo
+
+**Try it now:** [https://chatterbox-turbo.b-cdn.net/](https://chatterbox-turbo.b-cdn.net/)
+
 ## Overview
 
 ChatterboxWeb is a browser-based implementation of [Resemble AI's Chatterbox-Turbo](https://huggingface.co/ResembleAI/chatterbox-turbo-ONNX) text-to-speech model. It runs 100% locally in your browser using WebGPU acceleration for high-performance inference.
@@ -11,6 +15,7 @@ ChatterboxWeb is a browser-based implementation of [Resemble AI's Chatterbox-Tur
 ### Features
 
 - **Zero-shot voice cloning** - Clone any voice from a short audio sample (1-60 seconds)
+- **Default voices included** - Start generating speech immediately with pre-loaded voice samples
 - **Paralinguistic tags** - Add emotions and sounds like `[laugh]`, `[chuckle]`, `[sigh]`, etc.
 - **Voice library management** - Save and organize multiple voice profiles locally
 - **Generation history** - Keep track of all your generated audio
@@ -29,9 +34,10 @@ ChatterboxWeb is a browser-based implementation of [Resemble AI's Chatterbox-Tur
 
 ### Installation
 
-1. **Navigate to the project directory**
+1. **Clone the repository**
 
 ```bash
+git clone <repository-url>
 cd chatterbox-turbo-onnx
 ```
 
@@ -47,9 +53,7 @@ npm install
 npm run dev
 ```
 
-4. **Open in your browser**
-
-Navigate to `http://localhost:5173` (or the URL shown in your terminal)
+The development server will automatically open in your browser at `http://localhost:5173`
 
 **Important**: Open browser DevTools (F12) to see initialization progress and debug any issues.
 
@@ -86,13 +90,14 @@ Give your voice a name and description, then save it.
 
 ### 2. Generate Speech
 
-1. Select a voice from the dropdown
+1. Select a voice from the dropdown (or use the default voices provided)
 2. Enter your text in the text box
-3. (Optional) Add emotion tags like `[laugh]`, `[chuckle]`, `[sigh]` by clicking the tags below
+3. (Optional) Add emotion tags like `[laugh]`, `[chuckle]`, `[sigh]` by clicking the emotion tag buttons below the text area
 4. Adjust temperature and repetition penalty if desired:
-   - **Temperature**: Controls randomness (0.0-2.0, default 0.20)
-   - **Repetition Penalty**: Reduces repetitive speech (1.0-2.0, default 1.20)
-5. Click "Generate"
+   - **Temperature**: Controls randomness and variation in speech (0.0-2.0, default 0.20)
+   - **Repetition Penalty**: Reduces repetitive speech patterns (1.0-2.0, default 1.20)
+5. Click "Generate" to create the audio
+6. Play, download, or regenerate with different settings
 
 ### 3. Manage Your Voices
 
@@ -114,7 +119,7 @@ Go to "History" to:
 
 ## Available Emotion Tags
 
-The following paralinguistic tags are supported:
+The following paralinguistic tags are supported. Simply click the tag buttons in the UI or type them directly into your text:
 
 **Emotions:** `[angry]`, `[fear]`, `[surprised]`, `[happy]`, `[crying]`, `[dramatic]`, `[sarcastic]`
 
@@ -136,17 +141,21 @@ Oh, that's hilarious! [chuckle] Um anyway, how are you doing today?
 
 ```
 chatterbox-turbo-onnx/
-├── index.html              # Main HTML structure
-├── package.json            # Dependencies and scripts
+├── index.html                    # Main HTML structure and UI layout
+├── package.json                  # Dependencies and npm scripts
+├── vite.config.js                # Vite configuration with CORS headers
 ├── styles/
-│   └── main.css           # Complete UI styling
+│   └── main.css                 # Complete UI styling and theme
 ├── js/
-│   ├── main.js            # Main application controller
-│   ├── db.js              # IndexedDB wrapper
-│   ├── audio.js           # Audio recording/processing utilities
-│   ├── tts-engine-onnx.js # ONNX Runtime Web TTS engine
-│   └── tts-engine.js      # (Legacy) Transformers.js reference
-└── README.md              # This file
+│   ├── main.js                  # Main application controller and UI logic
+│   ├── db.js                    # IndexedDB wrapper for voices and history
+│   ├── audio.js                 # Audio recording and processing utilities
+│   └── tts-engine-complete.js   # ONNX Runtime TTS engine with WebGPU
+├── public/
+│   └── voices/                  # Default voice samples
+│       ├── lucy.wav             # Default female voice
+│       └── stewie.wav           # Default male voice
+└── README.md                    # This file
 ```
 
 ## Technical Details
@@ -190,12 +199,22 @@ This creates an optimized build in the `dist/` directory that you can deploy to 
 
 ## Deployment
 
-Since everything runs client-side, you can deploy to any static hosting:
+Since everything runs client-side, you can deploy to any static hosting service. The app requires specific CORS headers for WebGPU support (configured in `vite.config.js`):
 
-- **Netlify**: Drag and drop the `dist/` folder
-- **Vercel**: Connect your git repository
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+**Deployment Options:**
+
+- **Bunny CDN**: See live demo at [https://chatterbox-turbo.b-cdn.net/](https://chatterbox-turbo.b-cdn.net/)
+- **Netlify**: Drag and drop the `dist/` folder (configure headers in `netlify.toml`)
+- **Vercel**: Connect your git repository (configure headers in `vercel.json`)
 - **GitHub Pages**: Deploy the `dist/` folder to gh-pages branch
-- **AWS S3 + CloudFront**: Upload the `dist/` folder
+- **AWS S3 + CloudFront**: Upload the `dist/` folder (configure CloudFront headers)
+
+**Important**: Ensure your hosting provider supports the required CORS headers for WebGPU to work properly.
 
 ## Limitations & Known Issues
 
