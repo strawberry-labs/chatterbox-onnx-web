@@ -447,8 +447,10 @@ export class ChatterboxTTSEngine {
 
             console.log('Text tokenization:');
             console.log('  Input text:', text);
+            console.log('  Text length:', text.length, 'characters');
             console.log('  Token IDs:', inputIds);
             console.log('  Token count:', inputIds.length);
+            console.log('  Last 5 tokens:', inputIds.slice(-5));
 
             // Check if emotion tags are being tokenized (they should be in range 50257-50275)
             const emotionTokens = inputIds.filter(id => id >= 50257 && id <= 50275);
@@ -639,6 +641,11 @@ export class ChatterboxTTSEngine {
             // Step 3: Get text embeddings
             progressCallback?.({ status: 'processing', message: 'Embedding text...' });
 
+            console.log('About to embed text tokens:');
+            console.log('  Token IDs to embed:', inputIds);
+            console.log('  Max token ID:', Math.max(...inputIds));
+            console.log('  Min token ID:', Math.min(...inputIds));
+
             const inputIdsTensor = new ort.Tensor(
                 'int64',
                 BigInt64Array.from(inputIds.map(id => BigInt(id))),
@@ -652,11 +659,37 @@ export class ChatterboxTTSEngine {
             const textEmbeds = embedOutputs.inputs_embeds;
             console.log('Text embeddings shape:', textEmbeds.dims);
 
+            // Check if embeddings look reasonable
+            const embedData = textEmbeds.data;
+            let embedSum = 0;
+            for (let i = 0; i < Math.min(1024, embedData.length); i++) {
+                embedSum += Math.abs(embedData[i]);
+            }
+            console.log('First text embedding absolute sum:', embedSum.toFixed(2), '(should be >0)');
+
             // Step 4: Concatenate conditional embedding with text embeddings
+            console.log('\nChecking concatenation:');
+            console.log('  condEmb shape:', condEmb.dims);
+            console.log('  textEmbeds shape:', textEmbeds.dims);
+
+            // Check condEmb statistics
+            let condSum = 0;
+            for (let i = 0; i < Math.min(1024, condEmb.data.length); i++) {
+                condSum += Math.abs(condEmb.data[i]);
+            }
+            console.log('  First condEmb absolute sum:', condSum.toFixed(2));
+
             const inputsEmbeds = this.concatenateTensors(condEmb, textEmbeds);
             const totalSeqLen = inputsEmbeds.dims[1];
 
-            console.log('Concatenated embeddings shape:', inputsEmbeds.dims);
+            console.log('  Concatenated embeddings shape:', inputsEmbeds.dims);
+
+            // Verify concatenation worked
+            let concatSum = 0;
+            for (let i = 0; i < Math.min(1024, inputsEmbeds.data.length); i++) {
+                concatSum += Math.abs(inputsEmbeds.data[i]);
+            }
+            console.log('  First concatenated embedding absolute sum:', concatSum.toFixed(2));
 
             // Step 5: Initialize generation
             const generationStartTime = Date.now();
@@ -697,6 +730,28 @@ export class ChatterboxTTSEngine {
                     ...pastKeyValues
                 };
 
+                // Log iteration details for first few steps
+                if (step < 3) {
+                    console.log(`\n[Step ${step}]`);
+                    console.log('  inputs_embeds shape:', currentInputsEmbeds.dims);
+                    console.log('  inputs_embeds dtype:', currentInputsEmbeds.type);
+                    console.log('  attention_mask shape:', attentionMask.dims);
+                    console.log('  attention_mask dtype:', attentionMask.type);
+                    console.log('  position_ids shape:', positionIds.dims);
+                    console.log('  position_ids dtype:', positionIds.type);
+                    console.log('  position_ids values:', Array.from(positionIds.data.slice(0, 10), Number));
+
+                    // Check embeddings have valid values
+                    if (step === 0) {
+                        let embedSum = 0;
+                        const embedSlice = currentInputsEmbeds.data.slice(0, 1024);
+                        for (let i = 0; i < embedSlice.length; i++) {
+                            embedSum += Math.abs(embedSlice[i]);
+                        }
+                        console.log('  First embedding absolute sum:', embedSum.toFixed(2));
+                    }
+                }
+
                 // Run language model
                 const lmOutputs = await this.languageModelSession.run(lmInputs);
 
@@ -708,6 +763,11 @@ export class ChatterboxTTSEngine {
                     logitsData.slice(logitsData.length - vocabSize)
                 );
 
+                if (step < 3) {
+                    console.log('  logits shape:', logits.dims);
+                    console.log('  vocabSize:', vocabSize);
+                }
+
                 // Apply repetition penalty
                 const processedLogits = repetitionProcessor.process(
                     generateTokens,
@@ -717,6 +777,11 @@ export class ChatterboxTTSEngine {
                 // Sample next token with temperature
                 const nextTokenId = this.sampleToken(processedLogits, temperature);
                 generateTokens.push(nextTokenId);
+
+                if (step < 3 || step === maxNewTokens - 1) {
+                    console.log('  generated token:', nextTokenId);
+                    console.log('  generateTokens so far:', generateTokens.slice(0, 10), '...');
+                }
 
                 // Check for stop token
                 if (nextTokenId === STOP_SPEECH_TOKEN) {
@@ -761,7 +826,11 @@ export class ChatterboxTTSEngine {
                 currentInputsEmbeds = nextEmbedOutputs.inputs_embeds;
 
                 // Update attention mask and position IDs
-                const newMaskData = new BigInt64Array(attentionMask.dims[1] + 1).fill(1n);
+                // CRITICAL: Concatenate with existing mask, don't create new one
+                const oldMaskData = attentionMask.data;
+                const newMaskData = new BigInt64Array(oldMaskData.length + 1);
+                newMaskData.set(oldMaskData, 0);
+                newMaskData[oldMaskData.length] = 1n;
                 attentionMask = new ort.Tensor('int64', newMaskData, [1, newMaskData.length]);
 
                 const lastPos = Number(positionIds.data[positionIds.data.length - 1]);
@@ -785,6 +854,7 @@ export class ChatterboxTTSEngine {
             console.log('After slicing [1:-1]:');
             console.log('  Speech tokens count:', speechTokens.length);
             console.log('  First speech token:', speechTokens[0]);
+            console.log('  Last 10 speech tokens:', speechTokens.slice(-10));
             console.log('  Last speech token:', speechTokens[speechTokens.length - 1]);
 
             // Step 7: Decode to audio
@@ -938,40 +1008,19 @@ export class ChatterboxTTSEngine {
 
     // Helper: Sample token with temperature
     sampleToken(logits, temperature = 1.0) {
-        // Apply temperature
-        const scaledLogits = new Float32Array(logits.length);
-        for (let i = 0; i < logits.length; i++) {
-            scaledLogits[i] = logits[i] / temperature;
-        }
+        // Python uses greedy decoding (argmax), not sampling
+        // Find the index with the maximum logit value
+        let maxIdx = 0;
+        let maxVal = logits[0];
 
-        // Softmax
-        const maxLogit = Math.max(...scaledLogits);
-        const expLogits = new Float32Array(scaledLogits.length);
-        let sumExp = 0;
-
-        for (let i = 0; i < scaledLogits.length; i++) {
-            expLogits[i] = Math.exp(scaledLogits[i] - maxLogit);
-            sumExp += expLogits[i];
-        }
-
-        const probs = new Float32Array(expLogits.length);
-        for (let i = 0; i < expLogits.length; i++) {
-            probs[i] = expLogits[i] / sumExp;
-        }
-
-        // Sample from distribution
-        const r = Math.random();
-        let cumSum = 0;
-
-        for (let i = 0; i < probs.length; i++) {
-            cumSum += probs[i];
-            if (r < cumSum) {
-                return i;
+        for (let i = 1; i < logits.length; i++) {
+            if (logits[i] > maxVal) {
+                maxVal = logits[i];
+                maxIdx = i;
             }
         }
 
-        // Fallback to last token
-        return probs.length - 1;
+        return maxIdx;
     }
 
     // Cleanup

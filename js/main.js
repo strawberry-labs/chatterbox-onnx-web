@@ -61,6 +61,13 @@ function updateModelProgress(progress = {}) {
 
     if (modelProgressElements.container && status) {
         modelProgressElements.container.dataset.status = status;
+
+        // Add breathing glow effect when loading
+        if (status === 'loading') {
+            modelProgressElements.container.classList.add('loading');
+        } else {
+            modelProgressElements.container.classList.remove('loading');
+        }
     }
 
     let normalized = undefined;
@@ -759,6 +766,12 @@ function setupModalEvents() {
             state.voices.push(voice);
 
             console.log('✓ [UI] Voice saved with ID:', id);
+
+            // Auto-select if this is the first/only voice
+            if (!state.selectedVoice || state.voices.length === 1) {
+                state.selectedVoice = voice;
+                console.log('✓ [UI] Auto-selected voice:', voice.name);
+            }
 
             updateVoiceSelector();
             renderVoiceLibrary();
