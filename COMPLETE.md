@@ -130,7 +130,7 @@ If you encounter any errors:
 
 ### Voice Creation Modal
 - ✅ File upload option
-- ✅ Microphone recording (1-30s with timer)
+- ✅ Microphone recording (1-60s with timer)
 - ✅ Audio preview
 - ✅ Voice name input
 - ✅ Description input

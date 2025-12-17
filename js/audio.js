@@ -1,7 +1,7 @@
 // Audio recording and processing utilities
 
 const SAMPLE_RATE = 24000;
-const MAX_RECORDING_TIME = 30000; // 30 seconds in milliseconds
+const MAX_RECORDING_TIME = 60000; // 60 seconds in milliseconds
 const MIN_RECORDING_TIME = 1000; // 1 second
 
 export class AudioRecorder {

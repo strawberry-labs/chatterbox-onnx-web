@@ -101,11 +101,17 @@
                             </svg>
                             <h2>Text</h2>
                         </div>
-                        <textarea
-                            class="text-input"
-                            id="text-input"
-                            placeholder="Enter your text here..."
-                            rows="6">Oh, that's hilarious! [chuckle] Um anyway, how are you doing today?</textarea>
+                        <div class="text-input-wrapper">
+                            <div
+                                class="text-input-highlights"
+                                id="text-input-highlights"
+                                aria-hidden="true"></div>
+                            <textarea
+                                class="text-input"
+                                id="text-input"
+                                placeholder="Enter your text here..."
+                                rows="6">Oh, that's hilarious! [chuckle] Um anyway, how are you doing today?</textarea>
+                        </div>
 
                         <div class="emotion-tags">
                             <h3>EMOTION TAGS</h3>
@@ -241,7 +247,7 @@
                     <path d="M10 13C11.66 13 13 11.66 13 10V5C13 3.34 11.66 2 10 2C8.34 2 7 3.34 7 5V10C7 11.66 8.34 13 10 13Z" fill="white"/>
                     <path d="M15 10C15 12.76 12.76 15 10 15C7.24 15 5 12.76 5 10H3C3 13.53 5.61 16.43 9 16.92V20H11V16.92C14.39 16.43 17 13.53 17 10H15Z" fill="white"/>
                 </svg>
-                <span>Record with Microphone (1–30s)</span>
+                <span>Record with Microphone (1–60s)</span>
             </button>
 
             <!-- Recording State -->
@@ -269,6 +275,12 @@
                 </div>
 
                 <p class="sample-ready">Sample ready to upload.</p>
+
+                <div class="preview-actions">
+                    <button class="btn btn-secondary" id="re-record-btn" type="button">
+                        Re-record sample
+                    </button>
+                </div>
 
                 <div class="modal-buttons">
                     <button class="btn btn-secondary" id="cancel-voice-btn">Cancel</button>

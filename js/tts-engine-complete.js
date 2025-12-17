@@ -507,16 +507,18 @@ export class ChatterboxTTSEngine {
 
                     // Now find and replace these sequences in the original inputIds
                     let newInputIds = [...inputIds];
+                    let totalReplacements = 0;
                     for (const tag of emotionTagsFound) {
                         const sequences = emotionTagSequences[tag];
                         const replacementToken = emotionTagMap[tag];
+                        let replacementsForTag = 0;
 
-                        // Try both variants
+                        // Try both variants so tags inside sentences are also caught
                         for (const variant of [sequences.withSpace, sequences.withoutSpace]) {
-                            let found = false;
+                            if (!variant || variant.length === 0) continue;
 
-                            // Find the sequence in newInputIds
-                            for (let i = 0; i <= newInputIds.length - variant.length; i++) {
+                            // Find every occurrence of the variant sequence
+                            for (let i = 0; i <= newInputIds.length - variant.length;) {
                                 let match = true;
                                 for (let j = 0; j < variant.length; j++) {
                                     if (newInputIds[i + j] !== variant[j]) {
@@ -528,20 +530,32 @@ export class ChatterboxTTSEngine {
                                 if (match) {
                                     // Replace the sequence with the single emotion token
                                     newInputIds.splice(i, variant.length, replacementToken);
+                                    replacementsForTag++;
+                                    totalReplacements++;
                                     console.log(`  ✓ Replaced sequence at position ${i}:`, variant, '→', replacementToken);
-                                    found = true;
-                                    break; // Only replace first occurrence
+                                    i += 1; // Continue scanning after the inserted token
+                                } else {
+                                    i++;
                                 }
                             }
+                        }
 
-                            if (found) break; // Move to next tag
+                        if (replacementsForTag === 0) {
+                            console.warn(`  ⚠ Could not find tokenizer sequence for ${tag}, leaving text tokens as-is`);
+                        } else {
+                            console.log(`  → Replaced ${replacementsForTag} occurrence(s) of ${tag}`);
                         }
                     }
 
-                    inputIds = newInputIds;
-                    console.log('  Token replacement complete');
-                    console.log('  New token IDs:', inputIds);
-                    console.log('  New token count:', inputIds.length);
+                    if (totalReplacements === 0) {
+                        console.warn('  ⚠ Emotion tags detected but sequences were not replaced. Check tokenizer behavior.');
+                    } else {
+                        inputIds = newInputIds;
+                        console.log('  Token replacement complete');
+                        console.log('  Total replacements:', totalReplacements);
+                        console.log('  New token IDs:', inputIds);
+                        console.log('  New token count:', inputIds.length);
+                    }
                 }
             }
 
@@ -800,14 +814,33 @@ export class ChatterboxTTSEngine {
                 }
 
                 // Update KV cache for next iteration
+                // CRITICAL: Clone tensors to prevent WebGPU buffer reuse corruption
                 for (let i = 0; i < NUM_LAYERS; i++) {
                     const presentKey = lmOutputs[`present.${i}.key`];
                     const presentValue = lmOutputs[`present.${i}.value`];
+
                     if (presentKey) {
-                        pastKeyValues[`past_key_values.${i}.key`] = presentKey;
+                        // Deep copy the buffer data
+                        const keyData = presentKey.type === 'float16'
+                            ? new Uint16Array(presentKey.data)
+                            : new Float32Array(presentKey.data);
+                        pastKeyValues[`past_key_values.${i}.key`] = new ort.Tensor(
+                            presentKey.type,
+                            keyData,
+                            presentKey.dims
+                        );
                     }
+
                     if (presentValue) {
-                        pastKeyValues[`past_key_values.${i}.value`] = presentValue;
+                        // Deep copy the buffer data
+                        const valueData = presentValue.type === 'float16'
+                            ? new Uint16Array(presentValue.data)
+                            : new Float32Array(presentValue.data);
+                        pastKeyValues[`past_key_values.${i}.value`] = new ort.Tensor(
+                            presentValue.type,
+                            valueData,
+                            presentValue.dims
+                        );
                     }
                 }
 

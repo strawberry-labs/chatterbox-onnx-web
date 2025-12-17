@@ -10,7 +10,7 @@ ChatterboxWeb is a browser-based implementation of [Resemble AI's Chatterbox-Tur
 
 ### Features
 
-- **Zero-shot voice cloning** - Clone any voice from a short audio sample (1-30 seconds)
+- **Zero-shot voice cloning** - Clone any voice from a short audio sample (1-60 seconds)
 - **Paralinguistic tags** - Add emotions and sounds like `[laugh]`, `[chuckle]`, `[sigh]`, etc.
 - **Voice library management** - Save and organize multiple voice profiles locally
 - **Generation history** - Keep track of all your generated audio
@@ -80,7 +80,7 @@ On first launch, the application will:
 Click "Create new voice" or "Add Voice" and either:
 
 - **Upload an audio file** - Any format, will be automatically converted to 24kHz mono WAV
-- **Record with microphone** - Record 1-30 seconds of speech
+- **Record with microphone** - Record 1-60 seconds of speech
 
 Give your voice a name and description, then save it.
 

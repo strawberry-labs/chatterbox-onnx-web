@@ -11,6 +11,99 @@ const escapeHtml = (value = '') => String(value)
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+const EMOTION_TAGS = [
+    'angry', 'fear', 'surprised', 'whispering', 'advertisement', 'dramatic',
+    'narration', 'crying', 'happy', 'sarcastic', 'clear throat', 'sigh',
+    'shush', 'cough', 'groan', 'sniff', 'gasp', 'chuckle', 'laugh'
+];
+
+const escapeRegExp = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const emotionTagLookup = new Set(EMOTION_TAGS.map(tag => `[${tag.toLowerCase()}]`));
+const emotionTagPattern = new RegExp(`\\[(?:${EMOTION_TAGS.map(escapeRegExp).join('|')})\\]`, 'gi');
+
+let refreshTextHighlights = () => {};
+
+function buildHighlightedHtml(text = '') {
+    if (!text) return '';
+
+    const segments = [];
+    let lastIndex = 0;
+
+    text.replace(emotionTagPattern, (match, offset) => {
+        if (offset > lastIndex) {
+            segments.push({ text: text.slice(lastIndex, offset), isTag: false });
+        }
+        segments.push({ text: match, isTag: true });
+        lastIndex = offset + match.length;
+    });
+
+    if (lastIndex < text.length) {
+        segments.push({ text: text.slice(lastIndex), isTag: false });
+    }
+
+    return segments.map(segment => {
+        const safe = escapeHtml(segment.text);
+        return segment.isTag
+            ? `<mark class="tag-highlight">${safe}</mark>`
+            : safe;
+    }).join('');
+}
+
+function initializeTextHighlighter() {
+    const textarea = document.getElementById('text-input');
+    const highlights = document.getElementById('text-input-highlights');
+    if (!textarea || !highlights) {
+        refreshTextHighlights = () => {};
+        return;
+    }
+
+    const syncScroll = () => {
+        highlights.scrollTop = textarea.scrollTop;
+        highlights.scrollLeft = textarea.scrollLeft;
+    };
+
+    refreshTextHighlights = () => {
+        highlights.innerHTML = buildHighlightedHtml(textarea.value || '');
+        syncScroll();
+    };
+
+    textarea.addEventListener('input', refreshTextHighlights);
+    textarea.addEventListener('scroll', syncScroll);
+    textarea.addEventListener('keydown', (event) => handleTagDeletion(event, textarea));
+
+    refreshTextHighlights();
+}
+
+function handleTagDeletion(event, textarea) {
+    if (event.key !== 'Backspace' || textarea.selectionStart !== textarea.selectionEnd) {
+        return;
+    }
+
+    const cursor = textarea.selectionStart;
+    const value = textarea.value;
+
+    if (cursor === 0 || value[cursor - 1] !== ']') {
+        return;
+    }
+
+    const start = value.lastIndexOf('[', cursor - 1);
+    if (start === -1) {
+        return;
+    }
+
+    const candidate = value.slice(start, cursor).toLowerCase();
+    if (!emotionTagLookup.has(candidate)) {
+        return;
+    }
+
+    event.preventDefault();
+    const before = value.slice(0, start);
+    const after = value.slice(cursor);
+    textarea.value = before + after;
+    textarea.selectionStart = textarea.selectionEnd = start;
+    refreshTextHighlights();
+}
+
 function cleanupHistoryAudioUrls() {
     state.historyAudioUrls.forEach(url => URL.revokeObjectURL(url));
     state.historyAudioUrls = [];
@@ -96,6 +189,7 @@ const state = {
     ttsEngine: new ChatterboxTTSEngine(),
     audioRecorder: new AudioRecorder(),
     recordedAudio: null,
+    previewAudioUrl: null,
     temperature: 0.20,
     repetitionPenalty: 1.20,
     voiceFilter: '',
@@ -209,6 +303,9 @@ function navigateTo(page) {
 
 // Home page events
 function setupHomePageEvents() {
+    const textInput = document.getElementById('text-input');
+    initializeTextHighlighter();
+
     // Voice selector
     document.getElementById('voice-selector').addEventListener('change', (e) => {
         const voiceId = parseInt(e.target.value);
@@ -231,13 +328,13 @@ function setupHomePageEvents() {
     document.querySelectorAll('.tag-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const tag = `[${btn.textContent.trim()}]`;
-            const textarea = document.getElementById('text-input');
-            const cursorPos = textarea.selectionStart;
-            const textBefore = textarea.value.substring(0, cursorPos);
-            const textAfter = textarea.value.substring(cursorPos);
-            textarea.value = textBefore + tag + ' ' + textAfter;
-            textarea.focus();
-            textarea.selectionStart = textarea.selectionEnd = cursorPos + tag.length + 1;
+            const cursorPos = textInput.selectionStart;
+            const textBefore = textInput.value.substring(0, cursorPos);
+            const textAfter = textInput.value.substring(cursorPos);
+            textInput.value = textBefore + tag + ' ' + textAfter;
+            textInput.focus();
+            textInput.selectionStart = textInput.selectionEnd = cursorPos + tag.length + 1;
+            refreshTextHighlights();
         });
     });
 
@@ -669,6 +766,23 @@ function renderHistory() {
     });
 }
 
+async function startRecordingFlow() {
+    if (state.audioRecorder.isRecording()) {
+        console.warn('Recording already in progress');
+        return;
+    }
+
+    hidePreview({ resetForm: false });
+
+    try {
+        state.recordedAudio = null;
+        await state.audioRecorder.startRecording();
+        showRecordingState();
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
 // Modal
 function setupModalEvents() {
     const modal = document.getElementById('voice-upload-modal');
@@ -677,6 +791,7 @@ function setupModalEvents() {
     const fileInput = document.getElementById('file-input');
     const recordBtn = document.getElementById('record-btn');
     const stopRecordingBtn = document.getElementById('stop-recording-btn');
+    const reRecordBtn = document.getElementById('re-record-btn');
     const cancelVoiceBtn = document.getElementById('cancel-voice-btn');
     const saveVoiceBtn = document.getElementById('save-voice-btn');
 
@@ -706,13 +821,8 @@ function setupModalEvents() {
         }
     });
 
-    recordBtn.addEventListener('click', async () => {
-        try {
-            await state.audioRecorder.startRecording();
-            showRecordingState();
-        } catch (error) {
-            alert(error.message);
-        }
+    recordBtn.addEventListener('click', () => {
+        startRecordingFlow();
     });
 
     stopRecordingBtn.addEventListener('click', async () => {
@@ -726,8 +836,16 @@ function setupModalEvents() {
         }
     });
 
+    if (reRecordBtn) {
+        reRecordBtn.addEventListener('click', () => {
+            startRecordingFlow();
+        });
+    }
+
     cancelVoiceBtn.addEventListener('click', () => {
-        hidePreview();
+        hidePreview({ resetForm: true });
+        hideRecordingState();
+        state.audioRecorder.cleanup();
         state.recordedAudio = null;
     });
 
@@ -786,16 +904,20 @@ function setupModalEvents() {
 }
 
 function showModal() {
-    document.getElementById('voice-upload-modal').classList.add('active');
-    document.getElementById('recording-state').style.display = 'none';
-    document.getElementById('preview-state').style.display = 'none';
+    const modal = document.getElementById('voice-upload-modal');
+    modal.classList.add('active');
+    state.recordedAudio = null;
+    hideRecordingState();
+    hidePreview({ resetForm: true });
+    state.audioRecorder.cleanup();
 }
 
 function hideModal() {
     document.getElementById('voice-upload-modal').classList.remove('active');
+    hideRecordingState();
+    hidePreview({ resetForm: true });
+    state.audioRecorder.cleanup();
     state.recordedAudio = null;
-    document.getElementById('voice-name-input').value = '';
-    document.getElementById('voice-desc-input').value = '';
 }
 
 function showRecordingState() {
@@ -803,7 +925,9 @@ function showRecordingState() {
 
     const timer = setInterval(() => {
         const duration = state.audioRecorder.getRecordingDuration();
-        document.getElementById('recording-time').textContent = `0:${String(duration).padStart(2, '0')}`;
+        const minutes = Math.floor(duration / 60);
+        const seconds = duration % 60;
+        document.getElementById('recording-time').textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
 
         if (!state.audioRecorder.isRecording()) {
             clearInterval(timer);
@@ -813,21 +937,42 @@ function showRecordingState() {
 
 function hideRecordingState() {
     document.getElementById('recording-state').style.display = 'none';
+    document.getElementById('recording-time').textContent = '0:00';
 }
 
 function showPreview(audioBlob) {
     hideRecordingState();
 
+    if (state.previewAudioUrl) {
+        URL.revokeObjectURL(state.previewAudioUrl);
+        state.previewAudioUrl = null;
+    }
+
     const previewAudio = document.getElementById('preview-audio');
-    previewAudio.src = URL.createObjectURL(audioBlob);
+    const objectUrl = URL.createObjectURL(audioBlob);
+    previewAudio.src = objectUrl;
+    previewAudio.load();
+    state.previewAudioUrl = objectUrl;
 
     document.getElementById('preview-state').style.display = 'block';
 }
 
-function hidePreview() {
+function hidePreview({ resetForm = false } = {}) {
     document.getElementById('preview-state').style.display = 'none';
-    document.getElementById('voice-name-input').value = '';
-    document.getElementById('voice-desc-input').value = '';
+    const previewAudio = document.getElementById('preview-audio');
+    if (previewAudio) {
+        previewAudio.pause();
+        previewAudio.removeAttribute('src');
+        previewAudio.load();
+    }
+    if (state.previewAudioUrl) {
+        URL.revokeObjectURL(state.previewAudioUrl);
+        state.previewAudioUrl = null;
+    }
+    if (resetForm) {
+        document.getElementById('voice-name-input').value = '';
+        document.getElementById('voice-desc-input').value = '';
+    }
 }
 
 window.addEventListener('beforeunload', () => {
@@ -835,8 +980,13 @@ window.addEventListener('beforeunload', () => {
         URL.revokeObjectURL(state.currentAudioUrl);
         state.currentAudioUrl = null;
     }
+    if (state.previewAudioUrl) {
+        URL.revokeObjectURL(state.previewAudioUrl);
+        state.previewAudioUrl = null;
+    }
     cleanupVoicePreview();
     cleanupHistoryAudioUrls();
+    state.audioRecorder.cleanup();
 });
 
 // Start the application
